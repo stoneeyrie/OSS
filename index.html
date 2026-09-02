@@ -28,6 +28,8 @@
     --blue-soft:rgba(95,146,214,0.14);
     --purple:#9c81d6;
     --purple-soft:rgba(156,129,214,0.14);
+    --orange:#e0785a;
+    --orange-soft:rgba(224,120,90,0.14);
     --radius:6px;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
     --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -122,6 +124,7 @@
   .b-red{background:var(--red-soft);color:var(--red);}
   .b-blue{background:var(--blue-soft);color:var(--blue);}
   .b-purple{background:var(--purple-soft);color:var(--purple);}
+  .b-orange{background:var(--orange-soft);color:var(--orange);}
   .b-grey{background:var(--bg-elevated-2);color:var(--text-faint);}
   .dirty-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);display:inline-block;margin-right:4px;box-shadow:0 0 0 2px var(--amber-soft);}
   .row-copy-btn{background:none;border:1px solid transparent;border-radius:4px;padding:3px 6px;font-size:12px;color:var(--text-faint);opacity:0;transition:opacity .1s;}
@@ -235,6 +238,7 @@
     <table id="mainTable">
       <thead>
         <tr>
+          <th data-k="seqNumber" style="width:44px;">#</th>
           <th data-k="case">OSS-Nummer</th>
           <th data-k="subject">Titel / JIRA</th>
           <th data-k="internalStatus">Interner Status</th>
@@ -319,22 +323,58 @@ const INTERNAL_STATUSES = [
 const JIRA_STATUSES = ["", "OFFEN","IN ARBEIT","IN REVIEW","BLOCKIERT","ERLEDIGT","ENTFÄLLT"];
 const CONFLUENCE_FIELD_TARGETS = [
   {v:"", label:"Ignorieren"},
-  {v:"case", label:"OSS-Nummer (Schlüssel, Pflicht)"},
-  {v:"jiraTicket", label:"JIRA-Ticket"},
+  {v:"case", label:"OSS-Nummer (Schlüssel, Pflicht — Link wird automatisch erkannt)"},
+  {v:"seqNumber", label:"Laufende Nummer (aus Confluence)"},
+  {v:"jiraTicket", label:"JIRA-Ticket / Link (Ticket-Nr. wird automatisch erkannt)"},
   {v:"jiraStatus", label:"JIRA-Status"},
+  {v:"caseLink", label:"SAP-Fall-Link (falls in eigener Spalte)"},
   {v:"internalStatus", label:"Interner Status"},
   {v:"nextSteps", label:"Nächste Schritte"},
   {v:"notes", label:"Notizen"},
 ];
 function guessFieldForHeader(h){
-  const u = h.toUpperCase();
-  if(/OSS|CASE|NUMMER/.test(u)) return "case";
+  const u = h.toUpperCase().trim();
+  if(/^#$/.test(u) || /^NR\.?$/.test(u) || /LFD/.test(u)) return "seqNumber";
+  if(/OSS/.test(u)) return "case";
   if(/JIRA/.test(u) && /STATUS/.test(u)) return "jiraStatus";
   if(/JIRA/.test(u)) return "jiraTicket";
   if(/N[AÄ]CHSTE|SCHRITT|NEXT/.test(u)) return "nextSteps";
   if(/NOTIZ|NOTE|KOMMENTAR/.test(u)) return "notes";
+  if((/LINK/.test(u)||/URL/.test(u)) && /(SAP|CASE|FALL|PORTAL)/.test(u)) return "caseLink";
   if(/STATUS/.test(u)) return "internalStatus";
   return "";
+}
+
+/* Extract a JIRA issue key and/or link, and a SAP OSS-case link, from raw
+   text cells that mix free text with a ticket key / case number and a URL. */
+const JIRA_KEY_RE = /\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b/;
+const JIRA_URL_RE = /https?:\/\/\S+/;
+const CASE_ID_RE = /\b\d{4,10}\s*\/\s*\d{4}\b/;
+
+function extractUrl(text){
+  if(!text) return "";
+  const m = text.match(JIRA_URL_RE);
+  return m ? m[0].replace(/[),.;]+$/,"") : "";
+}
+function extractJiraInfo(text){
+  if(!text) return {key:"", link:""};
+  const link = extractUrl(text);
+  let key = "";
+  const keyMatch = text.match(JIRA_KEY_RE);
+  if(keyMatch){
+    key = keyMatch[0];
+  } else if(link){
+    const m = link.match(/\/browse\/([A-Za-z][A-Za-z0-9]{1,9}-\d{1,6})/);
+    if(m) key = m[1].toUpperCase();
+  }
+  return {key, link};
+}
+function extractCaseInfo(text){
+  if(!text) return {caseId:"", link:""};
+  const link = extractUrl(text);
+  const idMatch = text.match(CASE_ID_RE);
+  const caseId = idMatch ? idMatch[0].replace(/\s+/g,"") : "";
+  return {caseId, link};
 }
 
 function statusMeta(v){ return INTERNAL_STATUSES.find(s=>s.v===v) || INTERNAL_STATUSES[0]; }
@@ -480,8 +520,8 @@ async function mergeImport(rawRows){
         case: row.case,
         sap: sapBlock,
         own: {
-          internalStatus:"NEW", jiraTicket:"", jiraStatus:"", nextSteps:"",
-          notes:"", priorityOverride:"", archived:false
+          internalStatus:"NEW", jiraTicket:"", jiraLink:"", jiraStatus:"", nextSteps:"",
+          notes:"", priorityOverride:"", archived:false, seqNumber:"", caseLink:""
         },
         meta: { firstImportedAt: now, lastSeenImportAt: now, missingFromImport:false },
         sync: { confluenceSyncedAt:null, dirty:true }
@@ -570,7 +610,7 @@ function getFiltered(){
     if(fp && r.sap.priority !== fp) return false;
     if(fc && r.sap.component !== fc) return false;
     if(q){
-      const hay = [r.case, r.sap.subject, r.sap.component, r.own.jiraTicket, r.own.notes, r.own.nextSteps]
+      const hay = [r.case, r.own.seqNumber, r.sap.subject, r.sap.component, r.own.jiraTicket, r.own.notes, r.own.nextSteps]
         .join(" ").toLowerCase();
       if(!hay.includes(q)) return false;
     }
@@ -578,8 +618,15 @@ function getFiltered(){
   });
 
   rows.sort((a,b)=>{
+    if(sortKey==="seqNumber"){
+      const an = parseFloat(a.own.seqNumber), bn = parseFloat(b.own.seqNumber);
+      const aOk = !isNaN(an), bOk = !isNaN(bn);
+      if(aOk && bOk) return (an-bn)*sortDir;
+      if(aOk !== bOk) return (aOk ? -1 : 1)*sortDir; // numeric values sort before empty ones
+    }
     let av, bv;
     switch(sortKey){
+      case "seqNumber": av=a.own.seqNumber; bv=b.own.seqNumber; break;
       case "case": av=a.case; bv=b.case; break;
       case "subject": av=a.sap.subject; bv=b.sap.subject; break;
       case "internalStatus": av=a.own.internalStatus; bv=b.own.internalStatus; break;
@@ -608,11 +655,19 @@ function render(){
   tbody.innerHTML = rows.map(r=>{
     const sm = statusMeta(r.own.internalStatus);
     const cls = [r.meta.missingFromImport?"missing":"", r.own.archived?"archived":""].join(" ");
+    const jiraText = escapeHtml(r.own.jiraTicket) + (r.own.jiraStatus? " · "+escapeHtml(r.own.jiraStatus):"");
+    const jiraHtml = r.own.jiraLink
+      ? `<a href="${escapeHtml(r.own.jiraLink)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${jiraText}</a>`
+      : jiraText;
+    const caseCell = r.own.caseLink
+      ? `<a href="${escapeHtml(r.own.caseLink)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(r.case)}</a>`
+      : escapeHtml(r.case);
     return `<tr class="${cls}" data-case="${escapeHtml(r.case)}">
-      <td class="mono">${escapeHtml(r.case)}</td>
+      <td class="mono">${escapeHtml(r.own.seqNumber)||"–"}</td>
+      <td class="mono">${caseCell}</td>
       <td class="subject">
         <div class="title">${escapeHtml(r.sap.subject)}</div>
-        ${r.own.jiraTicket ? `<div class="jira">${escapeHtml(r.own.jiraTicket)}${r.own.jiraStatus? " · "+escapeHtml(r.own.jiraStatus):""}</div>` : ""}
+        ${r.own.jiraTicket ? `<div class="jira">${jiraHtml}</div>` : ""}
       </td>
       <td><span class="badge dot ${sm.cls}">${sm.label}</span>${r.meta.missingFromImport?'<div style="margin-top:4px;"><span class="badge b-red">nicht mehr im Import</span></div>':""}</td>
       <td>${escapeHtml(r.sap.status)||"–"}</td>
@@ -679,7 +734,7 @@ function openDrawer(caseId){
     <div class="drawer-head">
       <div>
         <h2>${escapeHtml(r.sap.subject)}</h2>
-        <div class="case-id">${escapeHtml(r.case)}</div>
+        <div class="case-id">${escapeHtml(r.case)}${r.own.caseLink ? ` · <a href="${escapeHtml(r.own.caseLink)}" target="_blank" rel="noopener">SAP-Portal ↗</a>` : ""}</div>
       </div>
       <button class="close" id="drawerClose">&times;</button>
     </div>
@@ -688,6 +743,17 @@ function openDrawer(caseId){
       <span>Nicht mehr im letzten SAP-Import enthalten – vermutlich geschlossen/archiviert.</span>
       <button class="btn ghost" id="archiveBtn" style="flex-shrink:0;">Archivieren</button>
     </div>` : ""}
+
+    <div class="row2">
+      <div class="field-group">
+        <label>Laufende Nummer</label>
+        <input type="text" id="editSeqNumber" value="${escapeHtml(r.own.seqNumber||"")}" placeholder="aus Confluence">
+      </div>
+      <div class="field-group">
+        <label>SAP-Fall-Link</label>
+        <input type="text" id="editCaseLink" value="${escapeHtml(r.own.caseLink||"")}" placeholder="https://me.sap.com/...">
+      </div>
+    </div>
 
     <div class="field-group">
       <label>Interner Status</label>
@@ -707,6 +773,11 @@ function openDrawer(caseId){
           ${JIRA_STATUSES.map(s=>`<option value="${s}" ${r.own.jiraStatus===s?"selected":""}>${s||"–"}</option>`).join("")}
         </select>
       </div>
+    </div>
+
+    <div class="field-group">
+      <label>JIRA-Link</label>
+      <input type="text" id="editJiraLink" value="${escapeHtml(r.own.jiraLink||"")}" placeholder="https://…atlassian.net/browse/A2ERP-58698">
     </div>
 
     <div class="field-group">
@@ -758,8 +829,11 @@ function openDrawer(caseId){
   }
   document.getElementById("saveBtn").onclick = async ()=>{
     const before = JSON.stringify(r.own);
+    r.own.seqNumber = document.getElementById("editSeqNumber").value.trim();
+    r.own.caseLink = document.getElementById("editCaseLink").value.trim();
     r.own.internalStatus = document.getElementById("editInternalStatus").value;
     r.own.jiraTicket = document.getElementById("editJiraTicket").value.trim();
+    r.own.jiraLink = document.getElementById("editJiraLink").value.trim();
     r.own.jiraStatus = document.getElementById("editJiraStatus").value;
     r.own.nextSteps = document.getElementById("editNextSteps").value;
     r.own.notes = document.getElementById("editNotes").value;
@@ -903,7 +977,9 @@ function confluenceLine(r){
   const titleCell = [r.sap.subject, r.own.jiraTicket ? `${r.own.jiraTicket}${r.own.jiraStatus?" ("+r.own.jiraStatus+")":""}` : ""]
     .filter(Boolean).join(" – ");
   return [
+    r.own.seqNumber || "",
     r.case,
+    r.own.caseLink || "",
     titleCell,
     sm.label,
     r.sap.priority || "",
@@ -928,7 +1004,7 @@ async function copyCaseToConfluence(caseId){
 document.getElementById("btnConfluence").addEventListener("click", ()=>{
   openModal(`
     <h2>Für Confluence kopieren</h2>
-    <p class="desc">Erzeugt tab-getrennten Text passend zu den Spalten OSS-Nummer, Titel/JIRA, Status, Priorität, Meldender, Gemeldet am, Letztes Update, Auto. Bestätigung, Nächste Schritte. Direkt in eine Confluence-Tabelle einfügbar.</p>
+    <p class="desc">Erzeugt tab-getrennten Text passend zu den Spalten Lfd. Nr., OSS-Nummer, SAP-Fall-Link, Titel/JIRA, Status, Priorität, Meldender, Gemeldet am, Letztes Update, Auto. Bestätigung, Nächste Schritte. Direkt in eine Confluence-Tabelle einfügbar.</p>
     <div class="checkline"><input type="checkbox" id="onlyDirty" checked> Nur ungesynchte Einträge (⏫)</div>
     <div class="checkline"><input type="checkbox" id="includeArchived"> Archivierte einschließen</div>
     <textarea class="export-out" id="exportOut" readonly></textarea>
@@ -1066,16 +1142,40 @@ async function runConfluenceMerge(rows, colMap, valueMap){
 
   for(const raw of rows){
     let caseId = "";
-    Object.keys(colMap).forEach(h=>{ if(colMap[h]==="case") caseId = (raw[h]||"").trim(); });
+    let extractedCaseLink = "";
+    Object.keys(colMap).forEach(h=>{
+      if(colMap[h]==="case"){
+        const raw0 = (raw[h]||"").trim();
+        const info = extractCaseInfo(raw0);
+        caseId = info.caseId || raw0;
+        if(info.link) extractedCaseLink = info.link;
+      }
+    });
     if(!caseId) continue;
 
     const incoming = {};
+    if(extractedCaseLink) incoming.caseLink = extractedCaseLink;
     Object.keys(colMap).forEach(h=>{
       const field = colMap[h];
       if(field==="case") return;
       let val = (raw[h]||"").trim();
-      if(field==="internalStatus"){ val = valueMap[val] || ""; }
-      if(val) incoming[field] = val;
+      if(!val) return;
+      if(field==="internalStatus"){
+        const mapped = valueMap[val] || "";
+        if(mapped) incoming[field] = mapped;
+        return;
+      }
+      if(field==="jiraTicket"){
+        const info = extractJiraInfo(val);
+        incoming.jiraTicket = info.key || val;
+        if(info.link) incoming.jiraLink = info.link;
+        return;
+      }
+      if(field==="caseLink"){
+        incoming.caseLink = extractUrl(val) || val;
+        return;
+      }
+      incoming[field] = val;
     });
 
     let rec = byCase.get(caseId);
@@ -1085,7 +1185,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
         sap: { case:caseId, subject:"", status:"", priority:"", installation:"", systemNumber:"",
           system:"", component:"", reporterId:"", reporter:"", creatorId:"", creator:"",
           customerId:"", customer:"", createdOn:"", updatedOn:"", autoConfirmDate:"" },
-        own: { internalStatus:"NEW", jiraTicket:"", jiraStatus:"", nextSteps:"", notes:"", priorityOverride:"", archived:false },
+        own: { internalStatus:"NEW", jiraTicket:"", jiraLink:"", jiraStatus:"", nextSteps:"", notes:"", priorityOverride:"", archived:false, seqNumber:"", caseLink:"" },
         meta: { firstImportedAt:new Date().toISOString(), lastSeenImportAt:null, missingFromImport:false },
         sync: { confluenceSyncedAt:new Date().toISOString(), dirty:false }
       };
@@ -1136,7 +1236,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
 }
 
 function openConflictModal(conflicts, summary){
-  const fieldLabel = {internalStatus:"Interner Status", jiraTicket:"JIRA-Ticket", jiraStatus:"JIRA-Status", nextSteps:"Nächste Schritte", notes:"Notizen"};
+  const fieldLabel = {internalStatus:"Interner Status", jiraTicket:"JIRA-Ticket", jiraLink:"JIRA-Link", jiraStatus:"JIRA-Status", nextSteps:"Nächste Schritte", notes:"Notizen"};
   const html = `
     <h2>Konflikte prüfen</h2>
     <p class="desc">${summary.created} neu angelegt, ${summary.applied} Felder automatisch übernommen. Bei diesen ${conflicts.length} Feldern weicht dein lokaler Wert vom Confluence-Wert ab — bitte entscheiden.</p>
