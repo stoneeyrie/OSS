@@ -127,38 +127,51 @@
   .b-orange{background:var(--orange-soft);color:var(--orange);}
   .b-grey{background:var(--bg-elevated-2);color:var(--text-faint);}
   .dirty-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);display:inline-block;margin-right:4px;box-shadow:0 0 0 2px var(--amber-soft);}
-  .row-copy-btn{background:none;border:1px solid transparent;border-radius:4px;padding:3px 6px;font-size:12px;color:var(--text-faint);opacity:0;transition:opacity .1s;}
-  tr:hover .row-copy-btn{opacity:1;}
-  .row-copy-btn:hover{background:var(--bg-hover);border-color:var(--border);color:var(--text);}
+  .row-action-btn{background:none;border:1px solid transparent;border-radius:4px;padding:3px 6px;font-size:12px;color:var(--text-faint);opacity:0;transition:opacity .1s;}
+  tr:hover .row-action-btn{opacity:1;}
+  .row-action-btn:hover{background:var(--bg-hover);border-color:var(--border);color:var(--text);}
   .empty-state{padding:60px 20px;text-align:center;color:var(--text-faint);}
+  .selection-bar{display:none;align-items:center;gap:10px;padding:9px 14px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;font-size:12.5px;color:var(--text-dim);}
+  .selection-bar.show{display:flex;}
+  .selection-bar .count{font-weight:600;color:var(--text);white-space:nowrap;}
+  .selection-bar .spacer{flex:1;}
 
   /* ---------- drawer / modal ---------- */
   .overlay{
-    position:fixed;inset:0;background:rgba(6,8,12,.6);display:none;
-    align-items:stretch;justify-content:flex-end;z-index:50;
+    position:fixed;inset:0;background:rgba(6,8,12,.65);display:none;
+    align-items:center;justify-content:center;z-index:50;padding:24px;
   }
   .overlay.open{display:flex;}
   .drawer{
-    width:min(480px,92vw);background:var(--bg-elevated);border-left:1px solid var(--border);
-    padding:22px;overflow-y:auto;display:flex;flex-direction:column;gap:16px;
+    width:min(860px,94vw);max-height:90vh;background:var(--bg-elevated);border:1px solid var(--border);
+    border-radius:var(--radius-lg, 10px);box-shadow:0 20px 60px rgba(0,0,0,.5);
+    padding:24px 28px;overflow-y:auto;display:flex;flex-direction:column;gap:14px;
   }
   .drawer h2{margin:0;font-size:16px;}
   .drawer .case-id{font-family:var(--mono);color:var(--accent);font-size:12.5px;}
-  .drawer .close{margin-left:auto;background:none;border:none;color:var(--text-faint);font-size:20px;line-height:1;}
+  .drawer .close{margin-left:auto;background:none;border:none;color:var(--text-faint);font-size:20px;line-height:1;flex-shrink:0;}
   .drawer .close:hover{color:var(--text);}
   .drawer-head{display:flex;align-items:flex-start;gap:10px;}
   .field-group{display:flex;flex-direction:column;gap:5px;}
   .field-group label{font-size:11.5px;color:var(--text-faint);font-weight:600;text-transform:uppercase;letter-spacing:.4px;}
+  .field-label-row{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .mini-btn{
+    padding:2px 9px;border-radius:999px;border:1px solid var(--border);
+    background:var(--bg-elevated-2);color:var(--accent);font-size:11px;font-weight:600;
+    cursor:pointer;white-space:nowrap;flex-shrink:0;
+  }
+  .mini-btn:hover{background:var(--bg-hover);border-color:var(--accent);}
   .field-group select, .field-group textarea, .field-group input[type=text]{
     background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);
     padding:8px 10px;border-radius:var(--radius);font-size:13px;font-family:var(--sans);width:100%;
   }
-  .field-group textarea{resize:vertical;min-height:60px;font-family:var(--sans);}
+  .field-group textarea{resize:vertical;min-height:70px;font-family:var(--sans);}
   .field-group select:focus,.field-group textarea:focus,.field-group input:focus{outline:none;border-color:var(--accent);}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
   .sap-readout{
     background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:var(--radius);
-    padding:12px 14px;font-size:12.5px;color:var(--text-dim);display:flex;flex-direction:column;gap:6px;
+    padding:12px 14px 12px 14px;font-size:12.5px;color:var(--text-dim);
+    display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;
   }
   .sap-readout .r{display:flex;justify-content:space-between;gap:10px;}
   .sap-readout .r span:first-child{color:var(--text-faint);}
@@ -169,6 +182,17 @@
     background:var(--red-soft);color:var(--red);border-radius:var(--radius);
     padding:8px 10px;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;
   }
+  .drawer-nav{
+    width:32px;height:32px;border-radius:50%;flex-shrink:0;
+    background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);
+    font-size:18px;line-height:1;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;
+  }
+  .drawer-nav:hover{background:var(--bg-hover);}
+  .drawer-nav:disabled{opacity:.3;cursor:default;}
+  .drawer-nav:disabled:hover{background:var(--bg-elevated-2);}
+  .drawer-nav-group{display:flex;align-items:center;gap:6px;margin-left:auto;padding-left:10px;}
+  .drawer-counter{font-size:11px;color:var(--text-faint);white-space:nowrap;padding:0 2px;}
 
   /* ---------- modals (import summary / confluence export / json) ---------- */
   .modal-overlay{position:fixed;inset:0;background:rgba(6,8,12,.65);display:none;align-items:center;justify-content:center;z-index:60;}
@@ -220,6 +244,7 @@
       <button class="btn ghost" id="btnExportJson">JSON-Backup</button>
       <button class="btn ghost" id="btnImportJson">JSON laden</button>
       <input type="file" id="fileJson" accept="application/json">
+      <button class="btn ghost" id="btnSapStatusMap" title="Eigene Zuordnung SAP-Status → interner Status pflegen">⚙ Status-Mapping</button>
     </div>
   </header>
 
@@ -234,10 +259,19 @@
     <div class="filter-count" id="filterCount"></div>
   </div>
 
+  <div class="selection-bar" id="selectionBar">
+    <span class="count" id="selectionCount">0 ausgewählt</span>
+    <div class="spacer"></div>
+    <button class="btn ghost" id="btnCopySelected">Für Confluence kopieren</button>
+    <button class="btn ghost" id="btnCopySelectedSync">Kopieren &amp; synchronisiert markieren</button>
+    <button class="link-btn" id="btnClearSelection">Auswahl aufheben</button>
+  </div>
+
   <div class="table-wrap">
     <table id="mainTable">
       <thead>
         <tr>
+          <th style="width:30px;"><input type="checkbox" id="selectAllCheckbox" title="Alle sichtbaren Zeilen auswählen"></th>
           <th data-k="seqNumber" style="width:44px;">#</th>
           <th data-k="case">OSS-Nummer</th>
           <th data-k="subject">Titel / JIRA</th>
@@ -379,6 +413,57 @@ function extractCaseInfo(text){
 
 function statusMeta(v){ return INTERNAL_STATUSES.find(s=>s.v===v) || INTERNAL_STATUSES[0]; }
 
+/* Best-effort mapping from the free-text SAP status (whatever the SAP export
+   happens to call it) onto our own fixed internal-status vocabulary, so a
+   button can offer "take over SAP's status" without the user having to
+   reinterpret it into the internal wording themselves. Keyword matching is
+   deliberately generous/German-leaning since that's what SAP OSS exports use. */
+const SAP_STATUS_MAP = [
+  {test:/kein\s*fix|abgelehnt|won'?t\s*fix|zurückgewiesen/i, v:"REJECTED"},
+  {test:/abgeschlossen|erledigt|bestätigt|geschlossen|closed|completed/i, v:"DONE"},
+  {test:/lösungsvorschlag|lösung\s*vorgeschlagen|solution\s*proposed/i, v:"SOLUTION_PROPOSED"},
+  {test:/partner/i, v:"PARTNER_ACTION"},
+  {test:/kunde|customer|rückfrage|rückmeldung/i, v:"CUSTOMER_ACTION"},
+  {test:/bearbeitung|in\s*progress|sap\s*intern/i, v:"SAP_IN_PROGRESS"},
+  {test:/neu|new/i, v:"NEW"},
+];
+function guessInternalStatusFromText(sapStatus){
+  if(!sapStatus) return null;
+  const hit = SAP_STATUS_MAP.find(m=>m.test.test(sapStatus));
+  return hit ? hit.v : null;
+}
+/* Custom user-defined overrides (set via the SAP-Status-Mapping settings
+   modal, keyed by the exact raw SAP status text) always win over the
+   generic keyword guess above — that's the whole point of letting the user
+   fix cases the heuristic gets wrong. */
+function mapSapStatusToInternal(sapStatus){
+  if(!sapStatus) return null;
+  const custom = sapStatusMap[sapStatus.trim()];
+  if(custom) return custom;
+  return guessInternalStatusFromText(sapStatus);
+}
+
+/* One-click row action: apply the mapped SAP status as the internal status
+   and save immediately — no drawer/modal round-trip needed for this alone. */
+async function applySapStatusToInternal(caseId){
+  const r = ALL.find(x=>x.case===caseId);
+  if(!r) return;
+  const mapped = mapSapStatusToInternal(r.sap.status);
+  if(!mapped){
+    showToast(`SAP-Status „${r.sap.status}“ konnte nicht automatisch zugeordnet werden.`);
+    return;
+  }
+  if(mapped === r.own.internalStatus){
+    showToast("Interner Status entspricht bereits dem SAP-Status.");
+    return;
+  }
+  r.own.internalStatus = mapped;
+  r.sync.dirty = true;
+  await dbPut(r);
+  render();
+  showToast(`${r.case}: interner Status auf „${statusMeta(mapped).label}“ gesetzt.`);
+}
+
 /* ---------------- IndexedDB layer ---------------- */
 function openDB(){
   return new Promise((resolve,reject)=>{
@@ -428,6 +513,9 @@ function dbClear(){
 let ALL = [];        // all records from DB, in memory
 let sortKey = "updatedOn";
 let sortDir = -1;
+let selectedCases = new Set(); // case IDs currently checked for bulk actions
+let sapStatusMap = {}; // user-defined overrides: raw SAP status text -> internal status value
+try{ sapStatusMap = JSON.parse(localStorage.getItem("oss_tracker_sap_status_map")||"{}"); }catch(err){ sapStatusMap = {}; }
 
 /* ---------------- CSV parsing (self-contained, no CDN dependency) ---------------- */
 function detectDelimiter(sample){
@@ -663,13 +751,17 @@ function render(){
       ? `<a href="${escapeHtml(r.own.caseLink)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(r.case)}</a>`
       : escapeHtml(r.case);
     return `<tr class="${cls}" data-case="${escapeHtml(r.case)}">
+      <td><input type="checkbox" class="row-select" data-case="${escapeHtml(r.case)}" ${selectedCases.has(r.case)?"checked":""}></td>
       <td class="mono">${escapeHtml(r.own.seqNumber)||"–"}</td>
       <td class="mono">${caseCell}</td>
       <td class="subject">
         <div class="title">${escapeHtml(r.sap.subject)}</div>
         ${r.own.jiraTicket ? `<div class="jira">${jiraHtml}</div>` : ""}
       </td>
-      <td><span class="badge dot ${sm.cls}">${sm.label}</span>${r.meta.missingFromImport?'<div style="margin-top:4px;"><span class="badge b-red">nicht mehr im Import</span></div>':""}</td>
+      <td>
+        <span class="badge dot ${sm.cls}">${sm.label}</span>${r.meta.missingFromImport?'<div style="margin-top:4px;"><span class="badge b-red">nicht mehr im Import</span></div>':""}
+        ${r.sap.status ? `<button class="row-action-btn" data-case="${escapeHtml(r.case)}" data-role="apply-sap-status" title="SAP-Status „${escapeHtml(r.sap.status)}“ direkt als internen Status übernehmen &amp; speichern">↺</button>` : ""}
+      </td>
       <td>${escapeHtml(r.sap.status)||"–"}</td>
       <td>${priorityBadge(r.sap.priority)}</td>
       <td>${escapeHtml(r.sap.component)||"–"}</td>
@@ -679,18 +771,42 @@ function render(){
       <td class="next">${escapeHtml(r.own.nextSteps)||""}</td>
       <td style="white-space:nowrap;">
         ${r.sync.dirty?'<span class="dirty-dot" title="noch nicht nach Confluence übertragen"></span>':""}
-        <button class="row-copy-btn" data-case="${escapeHtml(r.case)}" title="Diese Meldung für Confluence kopieren">📋</button>
+        <button class="row-action-btn" data-case="${escapeHtml(r.case)}" title="Diese Meldung für Confluence kopieren">📋</button>
       </td>
     </tr>`;
   }).join("");
 
   tbody.querySelectorAll("tr").forEach(tr=>{
     tr.addEventListener("click", (e)=>{
-      if(e.target.closest(".row-copy-btn")) return;
-      openDrawer(tr.dataset.case);
+      if(e.target.closest(".row-action-btn") || e.target.closest(".row-select")) return;
+      openDrawer(tr.dataset.case, rows.map(x=>x.case));
     });
   });
-  tbody.querySelectorAll(".row-copy-btn").forEach(btn=>{
+  tbody.querySelectorAll(".row-select").forEach(cb=>{
+    cb.addEventListener("click", (e)=> e.stopPropagation());
+    cb.addEventListener("change", ()=>{
+      if(cb.checked) selectedCases.add(cb.dataset.case);
+      else selectedCases.delete(cb.dataset.case);
+      updateSelectAllCheckbox(rows);
+      updateSelectionBar();
+    });
+  });
+  const selectAllCb = document.getElementById("selectAllCheckbox");
+  selectAllCb.onchange = ()=>{
+    if(selectAllCb.checked) rows.forEach(r=>selectedCases.add(r.case));
+    else rows.forEach(r=>selectedCases.delete(r.case));
+    tbody.querySelectorAll(".row-select").forEach(cb=>{ cb.checked = selectedCases.has(cb.dataset.case); });
+    updateSelectionBar();
+  };
+  updateSelectAllCheckbox(rows);
+  updateSelectionBar();
+  tbody.querySelectorAll('.row-action-btn[data-role="apply-sap-status"]').forEach(btn=>{
+    btn.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      applySapStatusToInternal(btn.dataset.case);
+    });
+  });
+  tbody.querySelectorAll('.row-action-btn:not([data-role])').forEach(btn=>{
     btn.addEventListener("click", (e)=>{
       e.stopPropagation();
       copyCaseToConfluence(btn.dataset.case);
@@ -699,6 +815,61 @@ function render(){
 
   renderStats();
 }
+
+/* ---------------- multi-select for bulk Confluence copy ---------------- */
+function updateSelectAllCheckbox(rows){
+  const selectAllCb = document.getElementById("selectAllCheckbox");
+  if(!rows.length){ selectAllCb.checked=false; selectAllCb.indeterminate=false; return; }
+  const selectedCount = rows.filter(r=>selectedCases.has(r.case)).length;
+  selectAllCb.checked = selectedCount === rows.length;
+  selectAllCb.indeterminate = selectedCount > 0 && selectedCount < rows.length;
+}
+function updateSelectionBar(){
+  const bar = document.getElementById("selectionBar");
+  const n = selectedCases.size;
+  bar.classList.toggle("show", n > 0);
+  document.getElementById("selectionCount").textContent = n === 1 ? "1 ausgewählt" : `${n} ausgewählt`;
+}
+function clearSelection(){
+  selectedCases.clear();
+  document.querySelectorAll(".row-select").forEach(cb=>{ cb.checked = false; });
+  const selectAllCb = document.getElementById("selectAllCheckbox");
+  if(selectAllCb){ selectAllCb.checked=false; selectAllCb.indeterminate=false; }
+  updateSelectionBar();
+}
+/* Order matches what's currently on screen (respects the active sort/filter),
+   by reading the checked rows straight out of the rendered table rather than
+   recomputing filter/sort logic a second time. */
+function getSelectedRowsInDisplayOrder(){
+  const caseIds = [...document.querySelectorAll("#tbody tr")]
+    .map(tr=>tr.dataset.case)
+    .filter(c=>selectedCases.has(c));
+  return caseIds.map(c=>ALL.find(r=>r.case===c)).filter(Boolean);
+}
+async function copySelectedToConfluence(markSynced){
+  const selected = getSelectedRowsInDisplayOrder();
+  if(selected.length === 0){
+    showToast("Keine Zeilen ausgewählt.");
+    return;
+  }
+  const tsv = selected.map(confluenceLine).join("\n");
+  const cellRows = selected.map(confluenceCells);
+  const links = selected.map(r=>r.own.caseLink || "");
+  await copyTsvAndHtml(tsv, cellRows, links);
+  if(markSynced){
+    const now = new Date().toISOString();
+    for(const r of selected){
+      r.sync.dirty = false;
+      r.sync.confluenceSyncedAt = now;
+      await dbPut(r);
+    }
+  }
+  showToast(`${selected.length} Meldung${selected.length===1?"":"en"} kopiert${markSynced?" & als synchronisiert markiert":""}.`);
+  if(markSynced){ clearSelection(); render(); }
+}
+document.getElementById("btnCopySelected").addEventListener("click", ()=> copySelectedToConfluence(false));
+document.getElementById("btnCopySelectedSync").addEventListener("click", ()=> copySelectedToConfluence(true));
+document.getElementById("btnClearSelection").addEventListener("click", clearSelection);
 
 function renderStats(){
   const chips = document.getElementById("statChips");
@@ -726,9 +897,16 @@ function renderStats(){
 }
 
 /* ---------------- drawer (edit) ---------------- */
-function openDrawer(caseId){
+let drawerNavList = [];
+let drawerNavIndex = -1;
+
+function openDrawer(caseId, navList){
   const r = ALL.find(x=>x.case===caseId);
   if(!r) return;
+
+  if(navList) drawerNavList = navList;
+  drawerNavIndex = drawerNavList.indexOf(caseId);
+
   const d = document.getElementById("drawer");
   d.innerHTML = `
     <div class="drawer-head">
@@ -755,17 +933,15 @@ function openDrawer(caseId){
       </div>
     </div>
 
-    <div class="field-group">
-      <label>Interner Status</label>
-      <select id="editInternalStatus">
-        ${INTERNAL_STATUSES.map(s=>`<option value="${s.v}" ${r.own.internalStatus===s.v?"selected":""}>${s.label}</option>`).join("")}
-      </select>
-    </div>
-
     <div class="row2">
       <div class="field-group">
-        <label>JIRA-Ticket</label>
-        <input type="text" id="editJiraTicket" value="${escapeHtml(r.own.jiraTicket)}" placeholder="z.B. A2ERP-58698">
+        <div class="field-label-row">
+          <label>Interner Status</label>
+          ${r.sap.status ? `<button type="button" class="mini-btn" id="applySapStatusBtn" title="SAP-Status „${escapeHtml(r.sap.status)}“ übernehmen">↺ aus SAP-Status</button>` : ""}
+        </div>
+        <select id="editInternalStatus">
+          ${INTERNAL_STATUSES.map(s=>`<option value="${s.v}" ${r.own.internalStatus===s.v?"selected":""}>${s.label}</option>`).join("")}
+        </select>
       </div>
       <div class="field-group">
         <label>JIRA-Status</label>
@@ -775,19 +951,26 @@ function openDrawer(caseId){
       </div>
     </div>
 
-    <div class="field-group">
-      <label>JIRA-Link</label>
-      <input type="text" id="editJiraLink" value="${escapeHtml(r.own.jiraLink||"")}" placeholder="https://…atlassian.net/browse/A2ERP-58698">
+    <div class="row2">
+      <div class="field-group">
+        <label>JIRA-Ticket</label>
+        <input type="text" id="editJiraTicket" value="${escapeHtml(r.own.jiraTicket)}" placeholder="z.B. A2ERP-58698">
+      </div>
+      <div class="field-group">
+        <label>JIRA-Link</label>
+        <input type="text" id="editJiraLink" value="${escapeHtml(r.own.jiraLink||"")}" placeholder="https://…atlassian.net/browse/A2ERP-58698">
+      </div>
     </div>
 
-    <div class="field-group">
-      <label>Nächste Schritte</label>
-      <textarea id="editNextSteps" placeholder="Was muss als nächstes passieren?">${escapeHtml(r.own.nextSteps)}</textarea>
-    </div>
-
-    <div class="field-group">
-      <label>Notizen</label>
-      <textarea id="editNotes" placeholder="Interne Notizen, Testergebnisse, Verlauf …">${escapeHtml(r.own.notes)}</textarea>
+    <div class="row2">
+      <div class="field-group">
+        <label>Nächste Schritte</label>
+        <textarea id="editNextSteps" placeholder="Was muss als nächstes passieren?">${escapeHtml(r.own.nextSteps)}</textarea>
+      </div>
+      <div class="field-group">
+        <label>Notizen</label>
+        <textarea id="editNotes" placeholder="Interne Notizen, Testergebnisse, Verlauf …">${escapeHtml(r.own.notes)}</textarea>
+      </div>
     </div>
 
     <div class="divider"></div>
@@ -810,12 +993,29 @@ function openDrawer(caseId){
       <button class="btn primary" id="saveBtn">Speichern</button>
       <button class="btn ghost" id="copyOneBtn">Für Confluence kopieren</button>
       <button class="btn ghost" id="cancelBtn">Abbrechen</button>
+      ${drawerNavList.length>1 ? `
+      <div class="drawer-nav-group">
+        <button class="drawer-nav" id="drawerPrevBtn" title="Vorherige Meldung" ${drawerNavIndex<=0?"disabled":""}>‹</button>
+        <span class="drawer-counter">${drawerNavIndex+1} / ${drawerNavList.length}</span>
+        <button class="drawer-nav" id="drawerNextBtn" title="Nächste Meldung" ${drawerNavIndex>=drawerNavList.length-1?"disabled":""}>›</button>
+      </div>` : ""}
     </div>
   `;
 
   document.getElementById("drawerClose").onclick = closeDrawer;
   document.getElementById("cancelBtn").onclick = closeDrawer;
   document.getElementById("copyOneBtn").onclick = ()=> copyCaseToConfluence(r.case);
+  const applySapStatusBtn = document.getElementById("applySapStatusBtn");
+  if(applySapStatusBtn){
+    applySapStatusBtn.onclick = ()=>{
+      const mapped = mapSapStatusToInternal(r.sap.status);
+      if(mapped){
+        document.getElementById("editInternalStatus").value = mapped;
+      } else {
+        showToast(`SAP-Status „${r.sap.status}“ konnte nicht eindeutig zugeordnet werden – bitte manuell wählen.`);
+      }
+    };
+  }
   const archiveBtn = document.getElementById("archiveBtn");
   if(archiveBtn){
     archiveBtn.onclick = async ()=>{
@@ -844,8 +1044,14 @@ function openDrawer(caseId){
     showToast("Gespeichert.");
   };
 
+  const prevBtn = document.getElementById("drawerPrevBtn");
+  const nextBtn = document.getElementById("drawerNextBtn");
+  if(prevBtn) prevBtn.onclick = ()=>{ if(drawerNavIndex > 0) openDrawer(drawerNavList[drawerNavIndex - 1]); };
+  if(nextBtn) nextBtn.onclick = ()=>{ if(drawerNavIndex < drawerNavList.length - 1) openDrawer(drawerNavList[drawerNavIndex + 1]); };
+
   document.getElementById("drawerOverlay").classList.add("open");
 }
+
 function closeDrawer(){ document.getElementById("drawerOverlay").classList.remove("open"); }
 document.getElementById("drawerOverlay").addEventListener("click", (e)=>{
   if(e.target.id === "drawerOverlay") closeDrawer();
@@ -972,14 +1178,21 @@ document.getElementById("fileJson").addEventListener("change", async (e)=>{
 });
 
 /* ---------------- Confluence export (single + bulk) ---------------- */
-function confluenceLine(r){
+/* Deliberately excludes seqNumber ("Lfd. Nr."): Confluence's own tables
+   auto-number rows in a non-editable leading column, so pasting our own
+   running number there just produces a stray/empty extra column. The
+   seqNumber field itself is still kept and editable in the app (it's used
+   to match rows back to Confluence on import) — it's just not part of what
+   gets pasted back into Confluence.
+   The SAP-Fall-Link is also not its own column: it's only ever attached as
+   the hyperlink on the OSS-Nummer cell (see htmlTableFromRows), so a case
+   without a link doesn't leave a visibly empty column behind. */
+function confluenceCells(r){
   const sm = statusMeta(r.own.internalStatus);
   const titleCell = [r.sap.subject, r.own.jiraTicket ? `${r.own.jiraTicket}${r.own.jiraStatus?" ("+r.own.jiraStatus+")":""}` : ""]
     .filter(Boolean).join(" – ");
   return [
-    r.own.seqNumber || "",
     r.case,
-    r.own.caseLink || "",
     titleCell,
     sm.label,
     r.sap.priority || "",
@@ -988,12 +1201,61 @@ function confluenceLine(r){
     fmtDate(r.sap.updatedOn),
     fmtDate(r.sap.autoConfirmDate),
     (r.own.nextSteps||"").replace(/\n/g," / ")
-  ].join("\t");
+  ];
 }
+function confluenceLine(r){ return confluenceCells(r).join("\t"); }
+
+/* Build a real HTML <table> for the clipboard. Confluence (like Excel/Sheets)
+   reads the "text/html" clipboard entry to know where row/column borders are —
+   plain tab-separated text alone is often dumped into a single cell instead
+   of being split up. caseLink isn't a cell in `cells` (see confluenceCells
+   above) — it's passed in separately per row and only ever surfaces as the
+   href on the OSS-Nummer cell, never as its own (often-empty) column.
+   The markup is built as one compact string with no leading/trailing
+   whitespace or line breaks between tags, since stray whitespace text nodes
+   in a pasted HTML fragment can be rendered by some editors as an extra
+   blank line/row above the table. */
+function htmlTableFromRows(rows, links){
+  const trs = rows.map((cells,ri)=>{
+    const link = links && links[ri];
+    const tds = cells.map((c,i)=>{
+      if(i===0 && link){ // OSS-Nummer column: wrap in the SAP-Fall-Link when present
+        return `<td><a href="${escapeHtml(link)}">${escapeHtml(c)}</a></td>`;
+      }
+      return `<td>${escapeHtml(c).replace(/\n/g,"<br>")}</td>`;
+    }).join("");
+    return `<tr>${tds}</tr>`;
+  }).join("");
+  return `<table><tbody>${trs}</tbody></table>`.trim();
+}
+
+/* Copy both a plain-text (tab-separated) and an HTML-table representation to
+   the clipboard, so the target app can pick whichever it understands.
+   `links` is a parallel array of SAP-Fall-Link URLs (or "") per row, used
+   only to hyperlink the OSS-Nummer cell in the HTML version — it never
+   becomes a column of its own.
+   Falls back to plain text if the rich clipboard API isn't available. */
+async function copyTsvAndHtml(tsvText, htmlRows, links){
+  if(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write){
+    try{
+      const item = new ClipboardItem({
+        "text/plain": new Blob([tsvText], {type:"text/plain"}),
+        "text/html": new Blob([htmlTableFromRows(htmlRows, links)], {type:"text/html"})
+      });
+      await navigator.clipboard.write([item]);
+      return;
+    } catch(err){
+      /* fall through to plain-text copy below */
+    }
+  }
+  await navigator.clipboard.writeText(tsvText);
+}
+
 async function copyCaseToConfluence(caseId){
   const r = ALL.find(x=>x.case===caseId);
   if(!r) return;
-  await navigator.clipboard.writeText(confluenceLine(r));
+  const cells = confluenceCells(r);
+  await copyTsvAndHtml(cells.join("\t"), [cells], [r.own.caseLink || ""]);
   r.sync.dirty = false;
   r.sync.confluenceSyncedAt = new Date().toISOString();
   await dbPut(r);
@@ -1001,10 +1263,52 @@ async function copyCaseToConfluence(caseId){
   showToast(`${r.case} kopiert & als synchronisiert markiert.`);
 }
 
+/* ---------------- SAP-Status → interner Status: custom mapping ---------------- */
+document.getElementById("btnSapStatusMap").addEventListener("click", ()=>{
+  const distinctValues = [...new Set(ALL.map(r=>r.sap.status).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"de"));
+  if(distinctValues.length === 0){
+    showToast("Noch keine SAP-Status-Werte vorhanden – erst SAP-Fälle importieren.");
+    return;
+  }
+  const html = `
+    <h2>SAP-Status → interner Status</h2>
+    <p class="desc">Standardmäßig wird der interne Status per Texterkennung aus dem SAP-Status geraten. Hier kannst du für einzelne SAP-Status-Texte eine feste Zuordnung hinterlegen, falls die automatische Erkennung nicht passt oder der Text intern keine Entsprechung hat. Wirkt sowohl beim ↺-Button in der Tabelle als auch im Detail-Modal.</p>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;max-height:50vh;overflow-y:auto;">
+      ${distinctValues.map(v=>{
+        const guess = guessInternalStatusFromText(v);
+        return `
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="flex:1;font-size:12.5px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(v)}">${escapeHtml(v)}</div>
+          <select data-value="${escapeHtml(v)}" class="sapmap-select" style="flex:1;background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12.5px;">
+            <option value="">Automatisch${guess?` (aktuell: ${statusMeta(guess).label})`:" (kein Vorschlag)"}</option>
+            ${INTERNAL_STATUSES.map(s=>`<option value="${s.v}" ${sapStatusMap[v]===s.v?"selected":""}>${s.label}</option>`).join("")}
+          </select>
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="sapMapCancel">Abbrechen</button>
+      <button class="btn primary" id="sapMapSave">Speichern</button>
+    </div>
+  `;
+  openModal(html);
+  document.getElementById("sapMapCancel").onclick = closeModal;
+  document.getElementById("sapMapSave").onclick = ()=>{
+    document.querySelectorAll(".sapmap-select").forEach(sel=>{
+      const v = sel.dataset.value;
+      if(sel.value) sapStatusMap[v] = sel.value;
+      else delete sapStatusMap[v];
+    });
+    localStorage.setItem("oss_tracker_sap_status_map", JSON.stringify(sapStatusMap));
+    closeModal();
+    showToast("SAP-Status-Zuordnung gespeichert.");
+  };
+});
+
 document.getElementById("btnConfluence").addEventListener("click", ()=>{
   openModal(`
     <h2>Für Confluence kopieren</h2>
-    <p class="desc">Erzeugt tab-getrennten Text passend zu den Spalten Lfd. Nr., OSS-Nummer, SAP-Fall-Link, Titel/JIRA, Status, Priorität, Meldender, Gemeldet am, Letztes Update, Auto. Bestätigung, Nächste Schritte. Direkt in eine Confluence-Tabelle einfügbar.</p>
+    <p class="desc">Erzeugt Zeilen passend zu den Spalten OSS-Nummer, Titel/JIRA, Status, Priorität, Meldender, Gemeldet am, Letztes Update, Auto. Bestätigung, Nächste Schritte. Die laufende Nummer wird bewusst nicht mitkopiert, da Confluence die Zeilennummerierung selbst übernimmt; der SAP-Fall-Link (falls vorhanden) steckt als Verlinkung direkt in der OSS-Nummer, statt eine eigene Spalte zu belegen. Wird als echte Tabelle in die Zwischenablage gelegt (nicht nur als Tab-Text) — beim Einfügen in eine Confluence-Tabelle landet jede Zeile/Spalte dann korrekt getrennt statt gesammelt in einer Zelle.</p>
     <div class="checkline"><input type="checkbox" id="onlyDirty" checked> Nur ungesynchte Einträge (⏫)</div>
     <div class="checkline"><input type="checkbox" id="includeArchived"> Archivierte einschließen</div>
     <textarea class="export-out" id="exportOut" readonly></textarea>
@@ -1031,11 +1335,15 @@ document.getElementById("btnConfluence").addEventListener("click", ()=>{
   document.getElementById("includeArchived").onchange = ()=> currentRows = build();
   document.getElementById("modalCancel").onclick = closeModal;
   document.getElementById("btnCopyClip").onclick = async ()=>{
-    await navigator.clipboard.writeText(document.getElementById("exportOut").value);
+    const cellRows = currentRows.map(confluenceCells);
+    const links = currentRows.map(r=>r.own.caseLink || "");
+    await copyTsvAndHtml(document.getElementById("exportOut").value, cellRows, links);
     showToast("In Zwischenablage kopiert.");
   };
   document.getElementById("btnMarkSynced").onclick = async ()=>{
-    await navigator.clipboard.writeText(document.getElementById("exportOut").value);
+    const cellRows = currentRows.map(confluenceCells);
+    const links = currentRows.map(r=>r.own.caseLink || "");
+    await copyTsvAndHtml(document.getElementById("exportOut").value, cellRows, links);
     const now = new Date().toISOString();
     for(const r of currentRows){
       r.sync.dirty = false;
