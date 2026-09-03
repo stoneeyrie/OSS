@@ -245,6 +245,7 @@
       <button class="btn ghost" id="btnImportJson">JSON laden</button>
       <input type="file" id="fileJson" accept="application/json">
       <button class="btn ghost" id="btnSapStatusMap" title="Eigene Zuordnung SAP-Status → interner Status pflegen">⚙ Status-Mapping</button>
+      <button class="btn ghost" id="btnColumnMapSettings" title="Gespeicherte Confluence-Spaltenzuordnung ansehen/ändern">⚙ Spalten-Mapping</button>
     </div>
   </header>
 
@@ -516,6 +517,8 @@ let sortDir = -1;
 let selectedCases = new Set(); // case IDs currently checked for bulk actions
 let sapStatusMap = {}; // user-defined overrides: raw SAP status text -> internal status value
 try{ sapStatusMap = JSON.parse(localStorage.getItem("oss_tracker_sap_status_map")||"{}"); }catch(err){ sapStatusMap = {}; }
+let savedColMap = {}; // global Confluence column mapping (header -> field, "" = ignored), reused automatically on future imports
+try{ savedColMap = JSON.parse(localStorage.getItem("oss_tracker_confluence_colmap")||"{}"); }catch(err){ savedColMap = {}; }
 
 /* ---------------- CSV parsing (self-contained, no CDN dependency) ---------------- */
 function detectDelimiter(sample){
@@ -1368,26 +1371,62 @@ document.getElementById("fileConfluence").addEventListener("change", async (e)=>
   const rows = parseCSV(text);
   e.target.value = "";
   if(!rows.length){ showToast("Keine Zeilen erkannt – Datei prüfen."); return; }
-  openColumnMappingModal(rows);
+
+  const headers = Object.keys(rows[0]);
+  const hasSavedMapping = Object.keys(savedColMap).length > 0;
+  // Effective mapping for this import: saved choice per header if we have one
+  // (including headers explicitly set to "Ignorieren"), otherwise best guess.
+  const effectiveMap = {};
+  headers.forEach(h=>{
+    const field = (h in savedColMap) ? savedColMap[h] : guessFieldForHeader(h);
+    if(field) effectiveMap[h] = field;
+  });
+  const hasCase = Object.values(effectiveMap).includes("case");
+
+  if(hasSavedMapping && hasCase){
+    // Learn any headers we haven't seen before into the saved mapping, so it
+    // stays complete without needing to reopen the dialog for genuinely new columns.
+    let changed = false;
+    headers.forEach(h=>{
+      if(!(h in savedColMap)){ savedColMap[h] = guessFieldForHeader(h); changed = true; }
+    });
+    if(changed) localStorage.setItem("oss_tracker_confluence_colmap", JSON.stringify(savedColMap));
+    proceedToValueMapping(rows, effectiveMap);
+  } else {
+    // First time, or the saved mapping no longer covers a case column (e.g.
+    // headers changed a lot) — fall back to the manual dialog as a safety net.
+    openColumnMappingModal(rows, headers);
+  }
+});
+document.getElementById("btnColumnMapSettings").addEventListener("click", ()=>{
+  const headers = Object.keys(savedColMap);
+  if(headers.length === 0){
+    showToast("Noch keine Spalten-Zuordnung gespeichert – erst einmal einen Confluence-Abgleich durchführen.");
+    return;
+  }
+  openColumnMappingModal(null, headers);
 });
 
-function openColumnMappingModal(rows){
-  const headers = Object.keys(rows[0]);
+function openColumnMappingModal(rows, headers){
+  const settingsOnly = !rows;
   const html = `
     <h2>Confluence-Spalten zuordnen</h2>
-    <p class="desc">${rows.length} Zeilen gefunden. Ordne zu, welche Spalte welchem Feld entspricht. Die OSS-Nummer ist Pflicht und dient als Schlüssel für den Abgleich.</p>
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
+    <p class="desc">${settingsOnly
+      ? "Aktuelle gespeicherte Spalten-Zuordnung. Sie wird automatisch bei jedem Confluence-Abgleich verwendet — der Dialog erscheint dann nicht mehr, außer eine Datei enthält keine erkennbare OSS-Nummer-Spalte."
+      : `${rows.length} Zeilen gefunden. Ordne zu, welche Spalte welchem Feld entspricht. Wird gespeichert und ab sofort automatisch für künftige Abgleiche verwendet.`
+    } Die OSS-Nummer ist Pflicht und dient als Schlüssel für den Abgleich.</p>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;max-height:50vh;overflow-y:auto;">
       ${headers.map(h=>`
         <div style="display:flex;align-items:center;gap:10px;">
-          <div style="flex:1;font-family:var(--mono);font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(h)}</div>
+          <div style="flex:1;font-family:var(--mono);font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(h)}">${escapeHtml(h)}</div>
           <select data-header="${escapeHtml(h)}" class="colmap-select" style="flex:1;background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12.5px;">
-            ${CONFLUENCE_FIELD_TARGETS.map(t=>`<option value="${t.v}" ${guessFieldForHeader(h)===t.v?"selected":""}>${t.label}</option>`).join("")}
+            ${CONFLUENCE_FIELD_TARGETS.map(t=>`<option value="${t.v}" ${(h in savedColMap ? savedColMap[h] : guessFieldForHeader(h))===t.v?"selected":""}>${t.label}</option>`).join("")}
           </select>
         </div>`).join("")}
     </div>
     <div class="modal-footer">
       <button class="btn ghost" id="mapCancel">Abbrechen</button>
-      <button class="btn primary" id="mapNext">Weiter</button>
+      <button class="btn primary" id="mapNext">${settingsOnly ? "Speichern" : "Weiter"}</button>
     </div>
   `;
   openModal(html);
@@ -1399,29 +1438,47 @@ function openColumnMappingModal(rows){
     });
     const hasCase = Object.values(map).includes("case");
     if(!hasCase){ showToast("Bitte eine Spalte als OSS-Nummer markieren."); return; }
-    proceedToValueMapping(rows, map);
+    // Persist the full choice per header (including explicit "Ignorieren" as
+    // "") so this dialog doesn't need to appear again for these columns.
+    headers.forEach(h=>{
+      const sel = document.querySelector(`.colmap-select[data-header="${CSS.escape(h)}"]`);
+      savedColMap[h] = sel ? sel.value : "";
+    });
+    localStorage.setItem("oss_tracker_confluence_colmap", JSON.stringify(savedColMap));
+    if(settingsOnly){
+      closeModal();
+      showToast("Spalten-Zuordnung gespeichert.");
+    } else {
+      proceedToValueMapping(rows, map);
+    }
   };
 }
 
 function proceedToValueMapping(rows, colMap){
   const statusHeader = Object.keys(colMap).find(h=>colMap[h]==="internalStatus");
+  let saved = {};
+  try{ saved = JSON.parse(localStorage.getItem("oss_tracker_status_value_map")||"{}"); }catch(err){}
   if(!statusHeader){
-    runConfluenceMerge(rows, colMap, {});
+    runConfluenceMerge(rows, colMap, saved);
     return;
   }
   const distinctValues = [...new Set(rows.map(r=>(r[statusHeader]||"").trim()).filter(Boolean))];
-  let saved = {};
-  try{ saved = JSON.parse(localStorage.getItem("oss_tracker_status_value_map")||"{}"); }catch(err){}
+  const unknownValues = distinctValues.filter(v => !(v in saved));
+  if(unknownValues.length === 0){
+    // Every status text in this import already has a saved mapping — no need to ask again.
+    runConfluenceMerge(rows, colMap, saved);
+    return;
+  }
   const html = `
     <h2>Status-Werte zuordnen</h2>
-    <p class="desc">Ordne die in Confluence verwendeten Status-Texte deinen internen Status-Kategorien zu. Wird für künftige Abgleiche gemerkt.</p>
+    <p class="desc">${unknownValues.length} neue Status-Text${unknownValues.length===1?"":"e"} aus Confluence gefunden, die noch keiner internen Kategorie zugeordnet sind. Ordne sie zu — wird gespeichert und ab sofort automatisch für künftige Abgleiche verwendet.</p>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
-      ${distinctValues.map(v=>`
+      ${unknownValues.map(v=>`
         <div style="display:flex;align-items:center;gap:10px;">
-          <div style="flex:1;font-size:12.5px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(v)}</div>
+          <div style="flex:1;font-size:12.5px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(v)}">${escapeHtml(v)}</div>
           <select data-value="${escapeHtml(v)}" class="valmap-select" style="flex:1;background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12.5px;">
             <option value="">Ignorieren</option>
-            ${INTERNAL_STATUSES.map(s=>`<option value="${s.v}" ${saved[v]===s.v?"selected":""}>${s.label}</option>`).join("")}
+            ${INTERNAL_STATUSES.map(s=>`<option value="${s.v}">${s.label}</option>`).join("")}
           </select>
         </div>`).join("")}
     </div>
@@ -1435,7 +1492,7 @@ function proceedToValueMapping(rows, colMap){
   document.getElementById("valNext").onclick = ()=>{
     const valueMap = {...saved};
     document.querySelectorAll(".valmap-select").forEach(sel=>{
-      if(sel.value) valueMap[sel.dataset.value] = sel.value;
+      valueMap[sel.dataset.value] = sel.value; // persist choice, incl. explicit "Ignorieren" as ""
     });
     localStorage.setItem("oss_tracker_status_value_map", JSON.stringify(valueMap));
     runConfluenceMerge(rows, colMap, valueMap);
