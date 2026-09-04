@@ -73,6 +73,8 @@
     display:inline-flex;align-items:center;gap:6px;transition:background .12s,border-color .12s;
   }
   .btn:hover{background:var(--bg-hover);border-color:#3a4358;}
+  .btn.danger{color:var(--red);border-color:var(--red);}
+  .btn.danger:hover{background:var(--red-soft);}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#1b1405;font-weight:600;}
   .btn.primary:hover{background:var(--accent-strong);}
   .btn.ghost{background:transparent;}
@@ -131,6 +133,20 @@
   tr:hover .row-action-btn{opacity:1;}
   .row-action-btn:hover{background:var(--bg-hover);border-color:var(--border);color:var(--text);}
   .empty-state{padding:60px 20px;text-align:center;color:var(--text-faint);}
+  .quickview{background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);margin:0 20px 14px;padding:12px 16px;}
+  .quickview-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:12px;}
+  .qv-title{font-size:12.5px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;}
+  .qv-controls{display:flex;align-items:center;gap:14px;font-size:12px;color:var(--text-faint);white-space:nowrap;}
+  .qv-controls input[type=number]{background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:2px 4px;font-size:12px;width:44px;}
+  .quickview-body{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;}
+  .quickview.collapsed .quickview-body{display:none;}
+  .qv-row{display:flex;align-items:center;gap:10px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--bg-elevated-2);}
+  .qv-row:hover{background:var(--bg-hover);}
+  .qv-case{font-family:var(--mono);font-size:12px;color:var(--accent);white-space:nowrap;}
+  .qv-subject{flex:1;font-size:12.5px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .qv-date{font-family:var(--mono);font-size:12px;color:var(--text-faint);white-space:nowrap;}
+  .qv-empty{padding:14px;text-align:center;color:var(--text-faint);font-size:12.5px;}
+  .ac-corrected{cursor:help;color:var(--orange);border-bottom:1px dotted var(--orange);}
   .selection-bar{display:none;align-items:center;gap:10px;padding:9px 14px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;font-size:12.5px;color:var(--text-dim);}
   .selection-bar.show{display:flex;}
   .selection-bar .count{font-weight:600;color:var(--text);white-space:nowrap;}
@@ -246,8 +262,20 @@
       <input type="file" id="fileJson" accept="application/json">
       <button class="btn ghost" id="btnSapStatusMap" title="Eigene Zuordnung SAP-Status → interner Status pflegen">⚙ Status-Mapping</button>
       <button class="btn ghost" id="btnColumnMapSettings" title="Gespeicherte Confluence-Spaltenzuordnung ansehen/ändern">⚙ Spalten-Mapping</button>
+      <button class="btn ghost danger" id="btnDeleteAll" title="Alle gespeicherten Fälle unwiderruflich löschen">🗑 Alles löschen</button>
     </div>
   </header>
+
+  <div class="quickview" id="quickview">
+    <div class="quickview-head">
+      <span class="qv-title">⏰ Nächste automatische Bestätigungen</span>
+      <div class="qv-controls">
+        <label>Top <input type="number" id="qvLimit" min="1" max="50" value="10"></label>
+        <button class="link-btn" id="qvToggle">einklappen</button>
+      </div>
+    </div>
+    <div class="quickview-body" id="quickviewBody"></div>
+  </div>
 
   <div class="filterbar">
     <input type="text" id="fSearch" placeholder="Suche: OSS-Nr, Titel, Komponente, JIRA…">
@@ -384,7 +412,12 @@ function guessFieldForHeader(h){
    text cells that mix free text with a ticket key / case number and a URL. */
 const JIRA_KEY_RE = /\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b/;
 const JIRA_URL_RE = /https?:\/\/\S+/;
-const CASE_ID_RE = /\b\d{4,10}\s*\/\s*\d{4}\b/;
+/* Real SAP OSS case numbers seen in practice run 6–9 digits (e.g.
+   "1102906/2026", "12345678/2024"). Kept reasonably tight — not the
+   previous 4–10 — specifically so this can't accidentally swallow a
+   stray adjacent number (e.g. a list/row number sitting right next to it
+   with no separating character) into one long false match. */
+const CASE_ID_RE = /\b\d{6,9}\s*\/\s*\d{4}\b/;
 
 function extractUrl(text){
   if(!text) return "";
@@ -407,7 +440,11 @@ function extractJiraInfo(text){
 function extractCaseInfo(text){
   if(!text) return {caseId:"", link:""};
   const link = extractUrl(text);
-  const idMatch = text.match(CASE_ID_RE);
+  // Search for the case number in the text with any URL stripped out first,
+  // so digits inside the link (path segments, IDs, ...) can never bleed
+  // into the extracted case number.
+  const textWithoutLink = link ? text.replace(link, " ") : text;
+  const idMatch = textWithoutLink.match(CASE_ID_RE);
   const caseId = idMatch ? idMatch[0].replace(/\s+/g,"") : "";
   return {caseId, link};
 }
@@ -637,6 +674,23 @@ async function mergeImport(rawRows){
 }
 
 /* ---------------- rendering ---------------- */
+/* Turn whatever format a date field happens to be stored in (ISO timestamp
+   from the SAP export, or "DD.MM.YYYY"/"DD.MM.YYYY HH:MM" as already used
+   for display) into a comparable timestamp. Sorting these fields as plain
+   strings breaks badly for "DD.MM.YYYY" values, since that format starts
+   with the day, not the year — e.g. "05.01.2027" would sort before
+   "12.08.2026" as a string even though it's a whole year later. */
+function parseDateValue(raw){
+  if(!raw) return null;
+  const ddmmyyyy = String(raw).match(/^(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}):(\d{2}))?$/);
+  if(ddmmyyyy){
+    const [, dd, mm, yyyy, hh, min] = ddmmyyyy;
+    const t = new Date(Number(yyyy), Number(mm)-1, Number(dd), Number(hh||0), Number(min||0)).getTime();
+    return isNaN(t) ? null : t;
+  }
+  const t = new Date(raw).getTime();
+  return isNaN(t) ? null : t;
+}
 function fmtDate(iso, withTime){
   if(!iso) return "–";
   let d;
@@ -653,6 +707,52 @@ function fmtDate(iso, withTime){
     s += ` ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
   }
   return s;
+}
+function fmtTimestamp(t, withTime){
+  if(t == null) return "–";
+  return fmtDate(new Date(t).toISOString(), withTime);
+}
+
+/* SAP occasionally reports an "Auto-Bestätigung"-Datum that's far too late —
+   sometimes correct only after actually opening the message in SAP. The
+   real rule (per the user, confirmed 2026-09) is that a message auto-closes
+   21 calendar days after the last update if the customer doesn't react —
+   so a reported date more than 21 days after the last update is almost
+   certainly the SAP bug rather than a real deadline.
+   When that happens, the DISPLAYED and SORTED date switches to our own
+   calculated "act by" estimate (last update + 20 days, a day of buffer
+   before the real cutoff) so it's actually something the user can rely on —
+   the original raw SAP value is never discarded, just moved into the
+   tooltip for reference. Non-suspicious dates are shown completely
+   unchanged. */
+const AUTO_CONFIRM_RULE_DAYS = 21;
+const AUTO_CONFIRM_SAFETY_DAYS = 20;
+function getAutoConfirmInfo(r){
+  const updatedT = parseDateValue(r.sap.updatedOn);
+  const rawT = parseDateValue(r.sap.autoConfirmDate);
+  let suspicious = false;
+  let expectedT = null;
+  if(updatedT !== null){
+    expectedT = updatedT + AUTO_CONFIRM_SAFETY_DAYS*86400000;
+    if(rawT !== null && (rawT - updatedT)/86400000 > AUTO_CONFIRM_RULE_DAYS){
+      suspicious = true;
+    }
+  }
+  const effectiveT = suspicious ? expectedT : rawT; // what to actually sort/count down by
+  return { rawT, expectedT, suspicious, effectiveT };
+}
+/* Returns {text, html, effectiveT} — `text` is the date to show (corrected
+   estimate when suspicious, raw SAP date otherwise), `html` wraps it with a
+   ⚠️ + explanatory tooltip (containing the original SAP date) when
+   suspicious, and is identical to `text` otherwise. */
+function autoConfirmDisplay(r){
+  const info = getAutoConfirmInfo(r);
+  if(!info.suspicious){
+    return { text: fmtDate(r.sap.autoConfirmDate), html: escapeHtml(fmtDate(r.sap.autoConfirmDate)), effectiveT: info.effectiveT };
+  }
+  const text = fmtTimestamp(info.expectedT);
+  const tooltip = `Berechnet: letztes SAP-Update + ${AUTO_CONFIRM_SAFETY_DAYS} Tage. SAP selbst nennt ${fmtDate(r.sap.autoConfirmDate)}, das liegt mehr als ${AUTO_CONFIRM_RULE_DAYS} Tage nach dem letzten Update und wirkt daher unplausibel (vermutlich ein SAP-Datenfehler — das echte Datum stimmt oft erst nach dem Öffnen der Meldung in SAP).`;
+  return { text, html: `<span class="ac-corrected" title="${escapeHtml(tooltip)}">${escapeHtml(text)} ⚠️</span>`, effectiveT: info.effectiveT };
 }
 
 function priorityBadge(p){
@@ -715,6 +815,14 @@ function getFiltered(){
       if(aOk && bOk) return (an-bn)*sortDir;
       if(aOk !== bOk) return (aOk ? -1 : 1)*sortDir; // numeric values sort before empty ones
     }
+    if(sortKey==="createdOn" || sortKey==="updatedOn" || sortKey==="autoConfirmDate"){
+      const at = sortKey==="autoConfirmDate" ? getAutoConfirmInfo(a).effectiveT : parseDateValue(a.sap[sortKey]);
+      const bt = sortKey==="autoConfirmDate" ? getAutoConfirmInfo(b).effectiveT : parseDateValue(b.sap[sortKey]);
+      const aOk = at !== null, bOk = bt !== null;
+      if(aOk && bOk) return (at-bt)*sortDir;
+      if(aOk !== bOk) return (aOk ? -1 : 1)*sortDir; // real dates sort before empty ones
+      return 0;
+    }
     let av, bv;
     switch(sortKey){
       case "seqNumber": av=a.own.seqNumber; bv=b.own.seqNumber; break;
@@ -770,7 +878,7 @@ function render(){
       <td>${escapeHtml(r.sap.component)||"–"}</td>
       <td class="mono">${fmtDate(r.sap.createdOn,true)}</td>
       <td class="mono">${fmtDate(r.sap.updatedOn,true)}</td>
-      <td class="mono">${fmtDate(r.sap.autoConfirmDate)}</td>
+      <td class="mono">${autoConfirmDisplay(r).html}</td>
       <td class="next">${escapeHtml(r.own.nextSteps)||""}</td>
       <td style="white-space:nowrap;">
         ${r.sync.dirty?'<span class="dirty-dot" title="noch nicht nach Confluence übertragen"></span>':""}
@@ -817,6 +925,7 @@ function render(){
   });
 
   renderStats();
+  renderQuickView();
 }
 
 /* ---------------- multi-select for bulk Confluence copy ---------------- */
@@ -856,9 +965,8 @@ async function copySelectedToConfluence(markSynced){
     return;
   }
   const tsv = selected.map(confluenceLine).join("\n");
-  const cellRows = selected.map(confluenceCells);
-  const links = selected.map(r=>r.own.caseLink || "");
-  await copyTsvAndHtml(tsv, cellRows, links);
+  const rowData = selected.map(confluenceRowData);
+  await copyTsvAndHtml(tsv, rowData);
   if(markSynced){
     const now = new Date().toISOString();
     for(const r of selected){
@@ -897,6 +1005,66 @@ function renderStats(){
   document.getElementById("lastImportLabel").textContent = last
     ? "letzter Import: " + fmtDate(last, true) + " Uhr"
     : "noch kein Import";
+}
+
+/* ---------------- quick view: upcoming auto-confirmations ---------------- */
+let qvCollapsed = localStorage.getItem("oss_tracker_quickview_collapsed") === "1";
+(function initQuickViewControls(){
+  const savedLimit = localStorage.getItem("oss_tracker_quickview_limit");
+  if(savedLimit) document.getElementById("qvLimit").value = savedLimit;
+  applyQuickViewCollapsedState();
+})();
+function applyQuickViewCollapsedState(){
+  document.getElementById("quickview").classList.toggle("collapsed", qvCollapsed);
+  document.getElementById("qvToggle").textContent = qvCollapsed ? "ausklappen" : "einklappen";
+}
+document.getElementById("qvLimit").addEventListener("change", ()=>{
+  localStorage.setItem("oss_tracker_quickview_limit", document.getElementById("qvLimit").value);
+  renderQuickView();
+});
+document.getElementById("qvToggle").addEventListener("click", ()=>{
+  qvCollapsed = !qvCollapsed;
+  localStorage.setItem("oss_tracker_quickview_collapsed", qvCollapsed ? "1" : "0");
+  applyQuickViewCollapsedState();
+});
+function renderQuickView(){
+  const body = document.getElementById("quickviewBody");
+  const limit = Math.max(1, parseInt(document.getElementById("qvLimit").value,10) || 10);
+  const now = Date.now();
+  // Only cases that could still actually get auto-confirmed: not archived,
+  // not already done/rejected, and with a usable date. Sorting uses the
+  // "effective" date (our corrected estimate when SAP's own date looks
+  // implausible, the raw SAP date otherwise) — that's the whole point of
+  // this view, so it has to be a date you can actually rely on.
+  const upcoming = ALL
+    .filter(r=>!r.own.archived && r.own.internalStatus!=="DONE" && r.own.internalStatus!=="REJECTED")
+    .map(r=>({ r, t: getAutoConfirmInfo(r).effectiveT }))
+    .filter(x=>x.t !== null)
+    .sort((a,b)=>a.t-b.t)
+    .slice(0, limit);
+
+  if(!upcoming.length){
+    body.innerHTML = `<div class="qv-empty">Keine anstehenden automatischen Bestätigungen gefunden.</div>`;
+    return;
+  }
+  body.innerHTML = upcoming.map(({r,t})=>{
+    const daysLeft = Math.ceil((t - now) / 86400000);
+    let badgeCls = "b-grey", badgeText = `in ${daysLeft} Tagen`;
+    if(daysLeft < 0){ badgeCls = "b-red"; badgeText = `${Math.abs(daysLeft)} Tag${Math.abs(daysLeft)===1?"":"e"} überfällig`; }
+    else if(daysLeft === 0){ badgeCls = "b-red"; badgeText = "heute"; }
+    else if(daysLeft === 1){ badgeCls = "b-orange"; badgeText = "morgen"; }
+    else if(daysLeft <= 3){ badgeCls = "b-orange"; badgeText = `in ${daysLeft} Tagen`; }
+    return `<div class="qv-row" data-case="${escapeHtml(r.case)}">
+      <span class="badge ${badgeCls}">${badgeText}</span>
+      <span class="qv-case">${escapeHtml(r.case)}</span>
+      <span class="qv-subject">${escapeHtml(r.sap.subject)||"–"}</span>
+      <span class="qv-date">${autoConfirmDisplay(r).html}</span>
+    </div>`;
+  }).join("");
+  const navList = upcoming.map(x=>x.r.case);
+  body.querySelectorAll(".qv-row").forEach(row=>{
+    row.addEventListener("click", ()=> openDrawer(row.dataset.case, navList));
+  });
 }
 
 /* ---------------- drawer (edit) ---------------- */
@@ -987,7 +1155,7 @@ function openDrawer(caseId, navList){
       <div class="r"><span>Melder</span><span>${escapeHtml(r.sap.reporter)||"–"} (${escapeHtml(r.sap.reporterId)||"–"})</span></div>
       <div class="r"><span>Gemeldet am</span><span>${fmtDate(r.sap.createdOn,true)}</span></div>
       <div class="r"><span>Letztes Update (SAP)</span><span>${fmtDate(r.sap.updatedOn,true)}</span></div>
-      <div class="r"><span>Auto-Bestätigung</span><span>${fmtDate(r.sap.autoConfirmDate)}</span></div>
+      <div class="r"><span>Auto-Bestätigung</span><span>${autoConfirmDisplay(r).html}</span></div>
       <div class="r"><span>Zuletzt im Import gesehen</span><span>${fmtDate(r.meta.lastSeenImportAt,true)}</span></div>
       <div class="r"><span>Confluence-Sync</span><span>${r.sync.confluenceSyncedAt? fmtDate(r.sync.confluenceSyncedAt,true) : "nie"}</span></div>
     </div>
@@ -1180,6 +1348,36 @@ document.getElementById("fileJson").addEventListener("change", async (e)=>{
   e.target.value = "";
 });
 
+/* ---------------- delete everything (start fresh) ---------------- */
+document.getElementById("btnDeleteAll").addEventListener("click", ()=>{
+  const count = ALL.length;
+  openModal(`
+    <h2>Alle Daten löschen?</h2>
+    <p class="desc">Das löscht ${count} gespeicherte Fälle unwiderruflich aus diesem Browser. Das kann <strong>nicht</strong> rückgängig gemacht werden. Falls du sicher gehen willst, mach vorher ein JSON-Backup (Button „JSON-Backup" in der Toolbar).</p>
+    <div class="checkline"><input type="checkbox" id="alsoResetMappings"> Auch gespeicherte Zuordnungen zurücksetzen (Spalten-Mapping, Status-Zuordnungen)</div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="delCancel">Abbrechen</button>
+      <button class="btn danger" id="delConfirm">Ja, alles löschen</button>
+    </div>
+  `);
+  document.getElementById("delCancel").onclick = closeModal;
+  document.getElementById("delConfirm").onclick = async ()=>{
+    await dbClear();
+    ALL = [];
+    if(document.getElementById("alsoResetMappings").checked){
+      localStorage.removeItem("oss_tracker_confluence_colmap");
+      localStorage.removeItem("oss_tracker_status_value_map");
+      localStorage.removeItem("oss_tracker_sap_status_map");
+      savedColMap = {};
+      sapStatusMap = {};
+    }
+    if(typeof clearSelection === "function") clearSelection();
+    render();
+    closeModal();
+    showToast(`${count} Fälle gelöscht. Du kannst jetzt neu importieren.`);
+  };
+});
+
 /* ---------------- Confluence export (single + bulk) ---------------- */
 /* Deliberately excludes seqNumber ("Lfd. Nr."): Confluence's own tables
    auto-number rows in a non-editable leading column, so pasting our own
@@ -1187,43 +1385,67 @@ document.getElementById("fileJson").addEventListener("change", async (e)=>{
    seqNumber field itself is still kept and editable in the app (it's used
    to match rows back to Confluence on import) — it's just not part of what
    gets pasted back into Confluence.
-   The SAP-Fall-Link is also not its own column: it's only ever attached as
-   the hyperlink on the OSS-Nummer cell (see htmlTableFromRows), so a case
-   without a link doesn't leave a visibly empty column behind. */
-function confluenceCells(r){
+   The SAP-Fall-Link and JIRA-Link are also not their own columns: they're
+   only ever attached as the hyperlink on the OSS-Nummer / JIRA-Ticket text
+   (see htmlTableFromRows), so a case without a link doesn't leave a visibly
+   empty column behind. */
+function confluenceRowData(r){
   const sm = statusMeta(r.own.internalStatus);
-  const titleCell = [r.sap.subject, r.own.jiraTicket ? `${r.own.jiraTicket}${r.own.jiraStatus?" ("+r.own.jiraStatus+")":""}` : ""]
-    .filter(Boolean).join(" – ");
-  return [
-    r.case,
-    titleCell,
-    sm.label,
-    r.sap.priority || "",
-    r.sap.reporter || "",
-    fmtDate(r.sap.createdOn, true),
-    fmtDate(r.sap.updatedOn),
-    fmtDate(r.sap.autoConfirmDate),
-    (r.own.nextSteps||"").replace(/\n/g," / ")
-  ];
+  const jiraLabel = r.own.jiraTicket ? `${r.own.jiraTicket}${r.own.jiraStatus?" ("+r.own.jiraStatus+")":""}` : "";
+  const subject = r.sap.subject || "";
+  const titleCell = [subject, jiraLabel].filter(Boolean).join(" – ");
+  // Use our corrected auto-confirm estimate here too when SAP's own date
+  // looks implausible — an export that quietly carries a bogus far-future
+  // date into Confluence is exactly the case that could cause a message to
+  // slip through and get auto-closed for real. A trailing "*" flags that
+  // it's a corrected estimate rather than SAP's own value.
+  const acInfo = getAutoConfirmInfo(r);
+  const autoConfirmText = acInfo.suspicious ? `${fmtTimestamp(acInfo.expectedT)} *` : fmtDate(r.sap.autoConfirmDate);
+  return {
+    cells: [
+      r.case,
+      titleCell,
+      sm.label,
+      r.sap.priority || "",
+      r.sap.reporter || "",
+      fmtDate(r.sap.createdOn, true),
+      fmtDate(r.sap.updatedOn),
+      autoConfirmText,
+      (r.own.nextSteps||"").replace(/\n/g," / ")
+    ],
+    caseLink: r.own.caseLink || "",
+    subject,
+    jiraLabel,
+    jiraLink: r.own.jiraLink || ""
+  };
 }
+function confluenceCells(r){ return confluenceRowData(r).cells; }
 function confluenceLine(r){ return confluenceCells(r).join("\t"); }
 
 /* Build a real HTML <table> for the clipboard. Confluence (like Excel/Sheets)
    reads the "text/html" clipboard entry to know where row/column borders are —
    plain tab-separated text alone is often dumped into a single cell instead
-   of being split up. caseLink isn't a cell in `cells` (see confluenceCells
-   above) — it's passed in separately per row and only ever surfaces as the
-   href on the OSS-Nummer cell, never as its own (often-empty) column.
+   of being split up. Takes the richer row-data objects from confluenceRowData
+   (not just the plain cell strings), since caseLink/jiraLink only ever
+   surface as hyperlinks on the OSS-Nummer / JIRA-Ticket text, never as
+   columns of their own.
    The markup is built as one compact string with no leading/trailing
    whitespace or line breaks between tags, since stray whitespace text nodes
    in a pasted HTML fragment can be rendered by some editors as an extra
    blank line/row above the table. */
-function htmlTableFromRows(rows, links){
-  const trs = rows.map((cells,ri)=>{
-    const link = links && links[ri];
-    const tds = cells.map((c,i)=>{
-      if(i===0 && link){ // OSS-Nummer column: wrap in the SAP-Fall-Link when present
-        return `<td><a href="${escapeHtml(link)}">${escapeHtml(c)}</a></td>`;
+function htmlTableFromRows(rowData){
+  const trs = rowData.map(d=>{
+    const tds = d.cells.map((c,i)=>{
+      if(i===0){ // OSS-Nummer column: wrap in the SAP-Fall-Link when present
+        return d.caseLink ? `<td><a href="${escapeHtml(d.caseLink)}">${escapeHtml(c)}</a></td>` : `<td>${escapeHtml(c)}</td>`;
+      }
+      if(i===1){ // Titel/JIRA column: subject stays plain, JIRA part gets its own link when present
+        let html = escapeHtml(d.subject);
+        if(d.jiraLabel){
+          const jiraHtml = d.jiraLink ? `<a href="${escapeHtml(d.jiraLink)}">${escapeHtml(d.jiraLabel)}</a>` : escapeHtml(d.jiraLabel);
+          html += (html ? " – " : "") + jiraHtml;
+        }
+        return `<td>${html}</td>`;
       }
       return `<td>${escapeHtml(c).replace(/\n/g,"<br>")}</td>`;
     }).join("");
@@ -1234,16 +1456,16 @@ function htmlTableFromRows(rows, links){
 
 /* Copy both a plain-text (tab-separated) and an HTML-table representation to
    the clipboard, so the target app can pick whichever it understands.
-   `links` is a parallel array of SAP-Fall-Link URLs (or "") per row, used
-   only to hyperlink the OSS-Nummer cell in the HTML version — it never
-   becomes a column of its own.
+   `rowData` is an array of confluenceRowData(...) objects — the plain-text
+   version uses tsvText as given (already assembled from .cells), the HTML
+   version additionally hyperlinks the OSS-Nummer and JIRA-Ticket cells.
    Falls back to plain text if the rich clipboard API isn't available. */
-async function copyTsvAndHtml(tsvText, htmlRows, links){
+async function copyTsvAndHtml(tsvText, rowData){
   if(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write){
     try{
       const item = new ClipboardItem({
         "text/plain": new Blob([tsvText], {type:"text/plain"}),
-        "text/html": new Blob([htmlTableFromRows(htmlRows, links)], {type:"text/html"})
+        "text/html": new Blob([htmlTableFromRows(rowData)], {type:"text/html"})
       });
       await navigator.clipboard.write([item]);
       return;
@@ -1257,8 +1479,8 @@ async function copyTsvAndHtml(tsvText, htmlRows, links){
 async function copyCaseToConfluence(caseId){
   const r = ALL.find(x=>x.case===caseId);
   if(!r) return;
-  const cells = confluenceCells(r);
-  await copyTsvAndHtml(cells.join("\t"), [cells], [r.own.caseLink || ""]);
+  const data = confluenceRowData(r);
+  await copyTsvAndHtml(data.cells.join("\t"), [data]);
   r.sync.dirty = false;
   r.sync.confluenceSyncedAt = new Date().toISOString();
   await dbPut(r);
@@ -1311,7 +1533,7 @@ document.getElementById("btnSapStatusMap").addEventListener("click", ()=>{
 document.getElementById("btnConfluence").addEventListener("click", ()=>{
   openModal(`
     <h2>Für Confluence kopieren</h2>
-    <p class="desc">Erzeugt Zeilen passend zu den Spalten OSS-Nummer, Titel/JIRA, Status, Priorität, Meldender, Gemeldet am, Letztes Update, Auto. Bestätigung, Nächste Schritte. Die laufende Nummer wird bewusst nicht mitkopiert, da Confluence die Zeilennummerierung selbst übernimmt; der SAP-Fall-Link (falls vorhanden) steckt als Verlinkung direkt in der OSS-Nummer, statt eine eigene Spalte zu belegen. Wird als echte Tabelle in die Zwischenablage gelegt (nicht nur als Tab-Text) — beim Einfügen in eine Confluence-Tabelle landet jede Zeile/Spalte dann korrekt getrennt statt gesammelt in einer Zelle.</p>
+    <p class="desc">Erzeugt Zeilen passend zu den Spalten OSS-Nummer, Titel/JIRA, Status, Priorität, Meldender, Gemeldet am, Letztes Update, Auto. Bestätigung, Nächste Schritte. Die laufende Nummer wird bewusst nicht mitkopiert, da Confluence die Zeilennummerierung selbst übernimmt; der SAP-Fall-Link und der JIRA-Link (falls vorhanden) stecken als Verlinkung direkt in OSS-Nummer bzw. JIRA-Ticket, statt eine eigene Spalte zu belegen. Wirkt das SAP-Datum der Auto-Bestätigung unplausibel, wird stattdessen unsere Schätzung „letztes Update + 20 Tage" exportiert, erkennbar am Sternchen (*). Wird als echte Tabelle in die Zwischenablage gelegt (nicht nur als Tab-Text) — beim Einfügen in eine Confluence-Tabelle landet jede Zeile/Spalte dann korrekt getrennt statt gesammelt in einer Zelle.</p>
     <div class="checkline"><input type="checkbox" id="onlyDirty" checked> Nur ungesynchte Einträge (⏫)</div>
     <div class="checkline"><input type="checkbox" id="includeArchived"> Archivierte einschließen</div>
     <textarea class="export-out" id="exportOut" readonly></textarea>
@@ -1338,15 +1560,13 @@ document.getElementById("btnConfluence").addEventListener("click", ()=>{
   document.getElementById("includeArchived").onchange = ()=> currentRows = build();
   document.getElementById("modalCancel").onclick = closeModal;
   document.getElementById("btnCopyClip").onclick = async ()=>{
-    const cellRows = currentRows.map(confluenceCells);
-    const links = currentRows.map(r=>r.own.caseLink || "");
-    await copyTsvAndHtml(document.getElementById("exportOut").value, cellRows, links);
+    const rowData = currentRows.map(confluenceRowData);
+    await copyTsvAndHtml(document.getElementById("exportOut").value, rowData);
     showToast("In Zwischenablage kopiert.");
   };
   document.getElementById("btnMarkSynced").onclick = async ()=>{
-    const cellRows = currentRows.map(confluenceCells);
-    const links = currentRows.map(r=>r.own.caseLink || "");
-    await copyTsvAndHtml(document.getElementById("exportOut").value, cellRows, links);
+    const rowData = currentRows.map(confluenceRowData);
+    await copyTsvAndHtml(document.getElementById("exportOut").value, rowData);
     const now = new Date().toISOString();
     for(const r of currentRows){
       r.sync.dirty = false;
@@ -1504,6 +1724,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
   const byCase = new Map(existing.map(r=>[r.case, r]));
   let created=0, applied=0;
   const conflicts = [];
+  const orphanCases = []; // newly created & never matched to an actual SAP import — worth a second look
 
   for(const raw of rows){
     let caseId = "";
@@ -1556,6 +1777,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
       };
       byCase.set(caseId, rec);
       created++;
+      orphanCases.push(caseId);
     }
 
     let recordHadConflict = false;
@@ -1584,7 +1806,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
   render();
 
   if(conflicts.length){
-    openConflictModal(conflicts, {created, applied});
+    openConflictModal(conflicts, {created, applied}, orphanCases);
   } else {
     closeModal();
     openModal(`
@@ -1594,17 +1816,24 @@ async function runConfluenceMerge(rows, colMap, valueMap){
         <div class="summary-box"><div class="num" style="color:var(--blue)">${applied}</div><div class="lbl">Felder übernommen</div></div>
         <div class="summary-box"><div class="num" style="color:var(--text-dim)">0</div><div class="lbl">Konflikte</div></div>
       </div>
+      ${orphanCases.length ? `
+      <p class="desc" style="margin-top:14px;">⚠️ ${orphanCases.length} neu angelegte OSS-Nummer${orphanCases.length===1?"":"n"} ${orphanCases.length===1?"kommt":"kommen"} in keinem bisherigen SAP-Import vor. Meist ist das ein ganz normaler neuer Fall — bitte trotzdem kurz prüfen, ob die Nummer korrekt aussieht (z.B. ungewöhnliche Länge = möglicher Erkennungsfehler):</p>
+      <div style="max-height:160px;overflow-y:auto;font-family:var(--mono);font-size:12px;color:var(--text-dim);background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;">
+        ${orphanCases.map(c=>escapeHtml(c)).join("<br>")}
+      </div>` : ""}
       <div class="modal-footer"><button class="btn primary" id="mergeOk">Ok</button></div>
     `);
     document.getElementById("mergeOk").onclick = closeModal;
   }
 }
 
-function openConflictModal(conflicts, summary){
+function openConflictModal(conflicts, summary, orphanCases){
   const fieldLabel = {internalStatus:"Interner Status", jiraTicket:"JIRA-Ticket", jiraLink:"JIRA-Link", jiraStatus:"JIRA-Status", nextSteps:"Nächste Schritte", notes:"Notizen"};
   const html = `
     <h2>Konflikte prüfen</h2>
     <p class="desc">${summary.created} neu angelegt, ${summary.applied} Felder automatisch übernommen. Bei diesen ${conflicts.length} Feldern weicht dein lokaler Wert vom Confluence-Wert ab — bitte entscheiden.</p>
+    ${orphanCases && orphanCases.length ? `
+    <p class="desc">⚠️ ${orphanCases.length} neu angelegte OSS-Nummer${orphanCases.length===1?"":"n"} ${orphanCases.length===1?"kommt":"kommen"} in keinem bisherigen SAP-Import vor — bitte kurz prüfen: ${orphanCases.map(c=>escapeHtml(c)).join(", ")}</p>` : ""}
     <div id="conflictList" style="display:flex;flex-direction:column;gap:10px;max-height:50vh;overflow-y:auto;">
       ${conflicts.map((c,i)=>`
         <div class="sap-readout" data-idx="${i}">
