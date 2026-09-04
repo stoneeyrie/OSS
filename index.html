@@ -419,13 +419,39 @@ const JIRA_URL_RE = /https?:\/\/\S+/;
    with no separating character) into one long false match. */
 const CASE_ID_RE = /\b\d{6,9}\s*\/\s*\d{4}\b/;
 
+/* Confluence sometimes exports a cell as a literal spreadsheet formula
+   instead of plain text/a real hyperlink, e.g.
+     =HYPERLINK("https://me.sap.com/cases/...2026/overview";"1087841/2026")
+   The generic URL regex below (https?:\/\/\S+) has no way to know the URL
+   ends at the closing quote — since quotes/semicolons/parens aren't
+   whitespace, it swallows the rest of the formula (";"1087841/2026")")
+   right along with it, which breaks both the link AND the case-number
+   extraction (which relies on the URL being cleanly removed first).
+   Recognize this exact shape up front and read the URL and display text
+   straight out of the formula's two arguments instead. Accepts both ";"
+   and "," as the argument separator (Confluence/Excel locale-dependent). */
+const HYPERLINK_FORMULA_RE = /^\s*=?\s*HYPERLINK\(\s*"([^"]+)"\s*[;,]\s*"([^"]*)"\s*\)\s*$/i;
+function parseHyperlinkFormula(text){
+  if(!text) return null;
+  const m = String(text).match(HYPERLINK_FORMULA_RE);
+  return m ? { url: m[1], text: m[2] } : null;
+}
+
 function extractUrl(text){
   if(!text) return "";
+  const hf = parseHyperlinkFormula(text);
+  if(hf) return hf.url;
   const m = text.match(JIRA_URL_RE);
   return m ? m[0].replace(/[),.;]+$/,"") : "";
 }
 function extractJiraInfo(text){
   if(!text) return {key:"", link:""};
+  const hf = parseHyperlinkFormula(text);
+  if(hf){
+    const keyMatch = hf.text.match(JIRA_KEY_RE);
+    const key = keyMatch ? keyMatch[0] : hf.text.trim();
+    return { key, link: hf.url };
+  }
   const link = extractUrl(text);
   let key = "";
   const keyMatch = text.match(JIRA_KEY_RE);
@@ -439,6 +465,14 @@ function extractJiraInfo(text){
 }
 function extractCaseInfo(text){
   if(!text) return {caseId:"", link:""};
+  const hf = parseHyperlinkFormula(text);
+  if(hf){
+    // Display text is the clean "1087841/2026" argument — use it directly,
+    // falling back to the case-number regex in case it's wrapped in extra text.
+    const idMatch = hf.text.match(CASE_ID_RE);
+    const caseId = idMatch ? idMatch[0].replace(/\s+/g,"") : hf.text.replace(/\s+/g,"");
+    return { caseId, link: hf.url };
+  }
   const link = extractUrl(text);
   // Search for the case number in the text with any URL stripped out first,
   // so digits inside the link (path segments, IDs, ...) can never bleed
@@ -768,6 +802,17 @@ function escapeHtml(s){
 function populateFilterOptions(){
   const mk = (sel, values, placeholder)=>{
     const el = document.getElementById(sel);
+    // Rebuilding the <option> list is destructive: it wipes the <select>'s
+    // current selection. render() (and therefore populateFilterOptions) runs
+    // on every filter change, including the "change" event fired by the user
+    // picking a value in THIS exact dropdown — rebuilding it mid-event was
+    // resetting the just-made selection before getFiltered() could read it,
+    // which is why filtering (esp. by Komponente) always came back empty.
+    // Only touch the DOM when the available values actually changed (e.g.
+    // after an import), so an in-progress selection is never disturbed.
+    const sig = values.join("\u0001");
+    if(el.dataset.optSig === sig) return;
+    el.dataset.optSig = sig;
     const current = el.value;
     el.innerHTML = `<option value="">${placeholder}</option>` +
       values.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
@@ -780,10 +825,13 @@ function populateFilterOptions(){
   mk("fPriority", priorities, "Priorität: alle");
   mk("fComponent", components, "Komponente: alle");
   const iEl = document.getElementById("fInternalStatus");
-  const cur = iEl.value;
-  iEl.innerHTML = `<option value="">Interner Status: alle</option>` +
-    INTERNAL_STATUSES.map(s=>`<option value="${s.v}">${s.label}</option>`).join("");
-  iEl.value = cur;
+  if(!iEl.dataset.optSig){
+    iEl.dataset.optSig = "1";
+    const cur = iEl.value;
+    iEl.innerHTML = `<option value="">Interner Status: alle</option>` +
+      INTERNAL_STATUSES.map(s=>`<option value="${s.v}">${s.label}</option>`).join("");
+    iEl.value = cur;
+  }
 }
 
 function getFiltered(){
