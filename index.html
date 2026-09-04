@@ -674,6 +674,7 @@ async function mergeImport(rawRows){
     if(existingMap.has(row.case)){
       const rec = existingMap.get(row.case);
       rec.sap = sapBlock;
+      rec.own.updatedOnOverridden = false;
       rec.meta.lastSeenImportAt = now;
       rec.meta.missingFromImport = false;
       updated++;
@@ -1176,7 +1177,10 @@ function openDrawer(caseId, navList){
         <input type="text" id="editJiraTicket" value="${escapeHtml(r.own.jiraTicket)}" placeholder="z.B. A2ERP-58698">
       </div>
       <div class="field-group">
-        <label>JIRA-Link</label>
+        <div class="field-label-row">
+          <label>JIRA-Link</label>
+          <button type="button" class="mini-btn" id="openJiraLinkBtn" title="Link in neuem Tab öffnen" ${r.own.jiraLink ? "" : "disabled"}>↗ öffnen</button>
+        </div>
         <input type="text" id="editJiraLink" value="${escapeHtml(r.own.jiraLink||"")}" placeholder="https://…atlassian.net/browse/A2ERP-58698">
       </div>
     </div>
@@ -1202,7 +1206,7 @@ function openDrawer(caseId, navList){
       <div class="r"><span>Installation</span><span>${escapeHtml(r.sap.installation)||"–"}</span></div>
       <div class="r"><span>Melder</span><span>${escapeHtml(r.sap.reporter)||"–"} (${escapeHtml(r.sap.reporterId)||"–"})</span></div>
       <div class="r"><span>Gemeldet am</span><span>${fmtDate(r.sap.createdOn,true)}</span></div>
-      <div class="r"><span>Letztes Update (SAP)</span><span>${fmtDate(r.sap.updatedOn,true)}</span></div>
+      <div class="r"><span>Letztes Update (SAP)</span><span>${fmtDate(r.sap.updatedOn,true)}${r.own.updatedOnOverridden ? ' <span title="Manuell auf heute gesetzt, bis zum nächsten SAP-Import" style="color:var(--accent);">✏️</span>' : ""} <button type="button" class="mini-btn" id="setUpdatedTodayBtn" title="Setzt dieses Datum auf heute — wird beim nächsten SAP-Import wieder durch den echten SAP-Wert ersetzt">Heute</button></span></div>
       <div class="r"><span>Auto-Bestätigung</span><span>${autoConfirmDisplay(r).html}</span></div>
       <div class="r"><span>Zuletzt im Import gesehen</span><span>${fmtDate(r.meta.lastSeenImportAt,true)}</span></div>
       <div class="r"><span>Confluence-Sync</span><span>${r.sync.confluenceSyncedAt? fmtDate(r.sync.confluenceSyncedAt,true) : "nie"}</span></div>
@@ -1233,6 +1237,30 @@ function openDrawer(caseId, navList){
       } else {
         showToast(`SAP-Status „${r.sap.status}“ konnte nicht eindeutig zugeordnet werden – bitte manuell wählen.`);
       }
+    };
+  }
+  const openJiraLinkBtn = document.getElementById("openJiraLinkBtn");
+  const editJiraLinkInput = document.getElementById("editJiraLink");
+  if(openJiraLinkBtn){
+    openJiraLinkBtn.onclick = ()=>{
+      const url = editJiraLinkInput.value.trim();
+      if(url) window.open(url, "_blank", "noopener");
+    };
+    editJiraLinkInput.addEventListener("input", ()=>{
+      openJiraLinkBtn.disabled = !editJiraLinkInput.value.trim();
+    });
+  }
+  const setUpdatedTodayBtn = document.getElementById("setUpdatedTodayBtn");
+  if(setUpdatedTodayBtn){
+    setUpdatedTodayBtn.onclick = async ()=>{
+      r.sap.updatedOn = new Date().toISOString();
+      r.own.updatedOnOverridden = true;
+      r.sync.dirty = true;
+      await dbPut(r);
+      ALL = await dbGetAll();
+      render();
+      openDrawer(r.case, drawerNavList);
+      showToast("Letztes Update auf heute gesetzt — wird beim nächsten SAP-Import wieder überschrieben.");
     };
   }
   const archiveBtn = document.getElementById("archiveBtn");
@@ -1490,7 +1518,7 @@ function htmlTableFromRows(rowData){
       if(i===1){ // Titel/JIRA column: subject stays plain, JIRA part gets its own link when present
         let html = escapeHtml(d.subject);
         if(d.jiraLabel){
-          const jiraHtml = d.jiraLink ? `<a href="${escapeHtml(d.jiraLink)}">${escapeHtml(d.jiraLabel)}</a>` : escapeHtml(d.jiraLabel);
+          const jiraHtml = d.jiraLink ? `<a href="${escapeHtml(d.jiraLink)}">${escapeHtml(d.jiraLink)}</a>` : escapeHtml(d.jiraLabel);
           html += (html ? " – " : "") + jiraHtml;
         }
         return `<td>${html}</td>`;
