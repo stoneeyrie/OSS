@@ -134,6 +134,13 @@
   .status-dot.mismatch{background:var(--amber);box-shadow:0 0 0 2px var(--amber-soft);}
   .row-action-btn{background:none;border:1px solid transparent;border-radius:4px;padding:3px 6px;font-size:12px;color:var(--text-faint);opacity:0;transition:opacity .1s;}
   tr:hover .row-action-btn{opacity:1;}
+  /* Same look as .row-action-btn, but always visible — used outside table
+     rows (e.g. the export-columns settings dialog) where there's no "tr"
+     to hover, so the opacity-0-until-hover trick above would otherwise
+     leave these permanently invisible. */
+  .colcfg-btn{background:none;border:1px solid var(--border);border-radius:4px;padding:3px 7px;font-size:12px;color:var(--text-dim);cursor:pointer;}
+  .colcfg-btn:hover{background:var(--bg-hover);color:var(--text);}
+  .colcfg-btn:disabled{opacity:.35;cursor:default;}
   .row-action-btn:hover{background:var(--bg-hover);border-color:var(--border);color:var(--text);}
   .empty-state{padding:60px 20px;text-align:center;color:var(--text-faint);}
   .quickview{background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);margin:0 20px 14px;padding:12px 16px;}
@@ -266,6 +273,7 @@
       <button class="btn ghost" id="btnSapStatusMap" title="Eigene Zuordnung SAP-Status → interner Status pflegen">⚙ Status-Mapping</button>
       <button class="btn ghost" id="btnColumnMapSettings" title="Gespeicherte Confluence-Spaltenzuordnung ansehen/ändern">⚙ Spalten-Mapping</button>
       <button class="btn ghost" id="btnExportColsSettings" title="Reihenfolge & Auswahl der Spalten für den Confluence-Export anpassen">⚙ Export-Spalten</button>
+      <button class="btn ghost" id="btnCustomFields" title="Eigene, pro Fall pflegbare Felder anlegen (für Confluence-Spalten ohne bestehende Entsprechung)">⚙ Eigene Felder</button>
       <button class="btn ghost danger" id="btnDeleteAll" title="Alle gespeicherten Fälle unwiderruflich löschen">🗑 Alles löschen</button>
     </div>
   </header>
@@ -618,6 +626,16 @@ try{ sapStatusMap = JSON.parse(localStorage.getItem("oss_tracker_sap_status_map"
 let savedColMap = {}; // global Confluence column mapping (header -> field, "" = ignored), reused automatically on future imports
 try{ savedColMap = JSON.parse(localStorage.getItem("oss_tracker_confluence_colmap")||"{}"); }catch(err){ savedColMap = {}; }
 
+/* User-defined custom fields: [{id, label}]. Exist for cases where
+   Confluence gains a column carrying information this app has no concept
+   of at all (e.g. "Eskalationsstufe") — the field gets a stable random id
+   (so renaming the label later doesn't orphan already-entered values),
+   is editable per case in the drawer, and its per-case value lives at
+   r.own.customFields[id]. */
+let customFieldDefs = [];
+try{ customFieldDefs = JSON.parse(localStorage.getItem("oss_tracker_custom_fields")||"[]"); }catch(err){ customFieldDefs = []; }
+if(!Array.isArray(customFieldDefs)) customFieldDefs = [];
+
 /* Catalog of fields that can be exported as a column when copying to
    Confluence, plus which ones are included and in what order by default.
    This exists so the export survives a change to the Confluence table
@@ -648,7 +666,25 @@ const CONFLUENCE_EXPORT_FIELDS = [
   {id:"notes", label:"Notizen", value:(r)=>(r.own.notes||"").replace(/\n/g," / ")},
   {id:"seqNumber", label:"Laufende Nummer", value:(r)=>r.own.seqNumber||""},
 ];
-const CONFLUENCE_EXPORT_FIELD_MAP = Object.fromEntries(CONFLUENCE_EXPORT_FIELDS.map(f=>[f.id,f]));
+/* The two functions below merge the fixed catalog above with whatever
+   custom fields the user has defined right now. Built fresh on every call
+   (the list is tiny, so this is cheap) rather than cached, so a field
+   added/renamed/removed via the "Eigene Felder" dialog is picked up
+   immediately everywhere — the export-columns dialog, the description
+   text, and confluenceRowData itself — without needing to keep a cache in
+   sync. Custom-field ids are namespaced "custom:<id>" so they can never
+   collide with a built-in field id. */
+function getExportFieldCatalog(){
+  const customs = customFieldDefs.map(cf=>({
+    id: "custom:"+cf.id,
+    label: `${cf.label} (eigenes Feld)`,
+    value: (r)=> (r.own.customFields && r.own.customFields[cf.id]) || ""
+  }));
+  return CONFLUENCE_EXPORT_FIELDS.concat(customs);
+}
+function getExportFieldMap(){
+  return Object.fromEntries(getExportFieldCatalog().map(f=>[f.id,f]));
+}
 // Matches the export's previous, hard-coded column order exactly, so
 // existing users see no change until they deliberately open the settings.
 const DEFAULT_CONFLUENCE_EXPORT_COLUMNS = ["case","titleJira","internalStatus","priority","reporter","createdOn","updatedOn","autoConfirmDate","nextSteps"];
@@ -657,7 +693,7 @@ try{ confluenceExportCols = JSON.parse(localStorage.getItem("oss_tracker_conflue
 if(!Array.isArray(confluenceExportCols)) confluenceExportCols = DEFAULT_CONFLUENCE_EXPORT_COLUMNS.slice();
 // Drop any id that no longer exists (e.g. after a future field is renamed/removed)
 // rather than letting it silently produce an empty/undefined column.
-confluenceExportCols = confluenceExportCols.filter(id=>CONFLUENCE_EXPORT_FIELD_MAP[id]);
+confluenceExportCols = confluenceExportCols.filter(id=>getExportFieldMap()[id]);
 if(confluenceExportCols.length===0) confluenceExportCols = DEFAULT_CONFLUENCE_EXPORT_COLUMNS.slice();
 
 /* ---------------- CSV parsing (self-contained, no CDN dependency) ---------------- */
@@ -753,7 +789,7 @@ async function mergeImport(rawRows){
         sap: sapBlock,
         own: {
           internalStatus:"NEW", jiraTicket:"", jiraLink:"", jiraStatus:"", nextSteps:"",
-          notes:"", priorityOverride:"", archived:false, seqNumber:"", caseLink:""
+          notes:"", priorityOverride:"", archived:false, seqNumber:"", caseLink:"", customFields:{}
         },
         meta: { firstImportedAt: now, lastSeenImportAt: now, missingFromImport:false },
         sync: { confluenceSyncedAt:null, dirty:true }
@@ -1285,6 +1321,17 @@ function openDrawer(caseId, navList){
       </div>
     </div>
 
+    ${customFieldDefs.length ? `
+    <div class="divider"></div>
+    <div class="qv-title" style="margin-bottom:8px;">Eigene Felder</div>
+    <div class="row2">
+      ${customFieldDefs.map(cf=>`
+        <div class="field-group">
+          <label>${escapeHtml(cf.label)}</label>
+          <input type="text" class="editCustomField" data-cfid="${cf.id}" value="${escapeHtml((r.own.customFields&&r.own.customFields[cf.id])||"")}">
+        </div>`).join("")}
+    </div>` : ""}
+
     <div class="divider"></div>
 
     <div class="sap-readout">
@@ -1373,6 +1420,10 @@ function openDrawer(caseId, navList){
     r.own.jiraStatus = document.getElementById("editJiraStatus").value;
     r.own.nextSteps = document.getElementById("editNextSteps").value;
     r.own.notes = document.getElementById("editNotes").value;
+    r.own.customFields = r.own.customFields || {};
+    document.querySelectorAll(".editCustomField").forEach(inp=>{
+      r.own.customFields[inp.dataset.cfid] = inp.value;
+    });
     if(JSON.stringify(r.own) !== before){ r.sync.dirty = true; }
     await dbPut(r);
     closeDrawer();
@@ -1569,7 +1620,7 @@ function confluenceRowData(r){
     caseLink: r.own.caseLink || "",
     autoConfirmText: acInfo.suspicious ? `${fmtTimestamp(acInfo.expectedT)} *` : fmtDate(r.sap.autoConfirmDate)
   };
-  const cols = confluenceExportCols.map(id=>CONFLUENCE_EXPORT_FIELD_MAP[id]).filter(Boolean);
+  const cols = confluenceExportCols.map(id=>getExportFieldMap()[id]).filter(Boolean);
   const cells = cols.map(f=>f.value(r, ctx));
   return { r, ctx, cols, cells };
 }
@@ -1692,7 +1743,7 @@ document.getElementById("btnSapStatusMap").addEventListener("click", ()=>{
 });
 
 document.getElementById("btnConfluence").addEventListener("click", ()=>{
-  const colLabels = confluenceExportCols.map(id=>CONFLUENCE_EXPORT_FIELD_MAP[id]?.label).filter(Boolean).join(", ");
+  const colLabels = confluenceExportCols.map(id=>getExportFieldMap()[id]?.label).filter(Boolean).join(", ");
   openModal(`
     <h2>Für Confluence kopieren</h2>
     <p class="desc">Erzeugt Zeilen mit den Spalten: <strong>${escapeHtml(colLabels)}</strong> (<button class="link-btn" id="openExportColsFromHere" type="button">Spalten anpassen</button>). Der SAP-Fall-Link und der JIRA-Link (falls vorhanden) stecken als Verlinkung direkt in OSS-Nummer bzw. JIRA-Ticket, statt eine eigene Spalte zu belegen. Wirkt das SAP-Datum der Auto-Bestätigung unplausibel, wird stattdessen unsere Schätzung „letztes Update + 20 Tage" exportiert, erkennbar am Sternchen (*). Wird als echte Tabelle in die Zwischenablage gelegt (nicht nur als Tab-Text) — beim Einfügen in eine Confluence-Tabelle landet jede Zeile/Spalte dann korrekt getrennt statt gesammelt in einer Zelle.</p>
@@ -1791,6 +1842,79 @@ document.getElementById("btnColumnMapSettings").addEventListener("click", ()=>{
 });
 
 document.getElementById("btnExportColsSettings").addEventListener("click", ()=> openExportColumnsModal());
+document.getElementById("btnCustomFields").addEventListener("click", ()=> openCustomFieldsModal());
+
+/* Manage the list of custom field DEFINITIONS (name + stable id) — not
+   their per-case values, those are edited in the drawer (see openDrawer).
+   Works on a local working copy so closing without "Speichern" discards
+   any add/rename/remove made in this session, same pattern as the export
+   columns dialog above. */
+function openCustomFieldsModal(){
+  let workingDefs = customFieldDefs.map(cf=>({...cf}));
+
+  const refreshList = ()=>{
+    document.getElementById("customFieldsList").innerHTML = workingDefs.length ? workingDefs.map(cf=>`
+      <div class="qv-row" style="cursor:default;">
+        <input type="text" class="cf-label-input" data-id="${cf.id}" value="${escapeHtml(cf.label)}" style="flex:1;background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12.5px;">
+        <button class="colcfg-btn" data-action="delete" data-id="${cf.id}" title="Feld entfernen (bereits erfasste Werte pro Fall bleiben in den Daten, tauchen aber nirgends mehr auf)">✕</button>
+      </div>`).join("") : `<div class="qv-empty">Noch keine eigenen Felder angelegt.</div>`;
+    document.querySelectorAll(".cf-label-input").forEach(inp=>{
+      inp.oninput = ()=>{
+        const cf = workingDefs.find(c=>c.id===inp.dataset.id);
+        if(cf) cf.label = inp.value;
+      };
+    });
+    document.querySelectorAll('#customFieldsList [data-action="delete"]').forEach(btn=>{
+      btn.onclick = ()=>{
+        workingDefs = workingDefs.filter(c=>c.id!==btn.dataset.id);
+        refreshList();
+      };
+    });
+  };
+
+  openModal(`
+    <h2>Eigene Felder</h2>
+    <p class="desc">Für Confluence-Spalten, die es in dieser App noch gar nicht gibt (z.B. „Eskalationsstufe“): hier ein Feld anlegen, danach in jeder Fall-Detailansicht ausfüllbar und im Export-Spalten-Dialog als Spalte wählbar.</p>
+    <div id="customFieldsList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;max-height:38vh;overflow-y:auto;"></div>
+    <div style="display:flex;gap:8px;margin-bottom:4px;">
+      <input type="text" id="newCustomFieldName" placeholder="Name des neuen Felds, z.B. Eskalationsstufe" style="flex:1;background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12.5px;">
+      <button class="btn ghost" id="addCustomFieldBtn">+ Hinzufügen</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="customFieldsCancel">Abbrechen</button>
+      <button class="btn primary" id="customFieldsSave">Speichern</button>
+    </div>
+  `);
+  refreshList();
+  const addField = ()=>{
+    const nameInput = document.getElementById("newCustomFieldName");
+    const label = nameInput.value.trim();
+    if(!label) return;
+    // A random suffix (not just the label) keeps the id stable even if the
+    // field gets renamed later, so a rename never orphans already-entered
+    // per-case values or silently drops the field out of a saved export
+    // column order.
+    workingDefs.push({ id: "cf_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), label });
+    nameInput.value = "";
+    refreshList();
+    nameInput.focus();
+  };
+  document.getElementById("addCustomFieldBtn").onclick = addField;
+  document.getElementById("newCustomFieldName").addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ e.preventDefault(); addField(); } });
+  document.getElementById("customFieldsCancel").onclick = closeModal;
+  document.getElementById("customFieldsSave").onclick = ()=>{
+    customFieldDefs = workingDefs.filter(cf=>cf.label.trim());
+    // A field dropped here can't stay selected as an export column either —
+    // its per-case values in r.own.customFields are left untouched, just no
+    // longer surfaced anywhere.
+    confluenceExportCols = confluenceExportCols.filter(id=>!id.startsWith("custom:") || customFieldDefs.some(cf=>"custom:"+cf.id===id));
+    localStorage.setItem("oss_tracker_custom_fields", JSON.stringify(customFieldDefs));
+    localStorage.setItem("oss_tracker_confluence_export_cols", JSON.stringify(confluenceExportCols));
+    closeModal();
+    showToast("Eigene Felder gespeichert.");
+    render();
+  };
+}
 
 /* Settings for confluenceExportCols: which fields get exported when copying
    to Confluence, and in what order. Kept separate from the *import* column
@@ -1802,18 +1926,18 @@ function openExportColumnsModal(){
   let workingCols = confluenceExportCols.slice();
 
   const renderModalBody = ()=>{
-    const included = workingCols.map(id=>CONFLUENCE_EXPORT_FIELD_MAP[id]).filter(Boolean);
-    const availableIds = CONFLUENCE_EXPORT_FIELDS.map(f=>f.id).filter(id=>!workingCols.includes(id));
+    const included = workingCols.map(id=>getExportFieldMap()[id]).filter(Boolean);
+    const availableIds = getExportFieldCatalog().map(f=>f.id).filter(id=>!workingCols.includes(id));
     document.getElementById("exportColsIncluded").innerHTML = included.length ? included.map((f,i)=>`
       <div class="qv-row" data-id="${f.id}" style="cursor:default;">
         <span class="qv-case" style="min-width:22px;">${i+1}.</span>
         <span class="qv-subject" style="flex:1;">${escapeHtml(f.label)}</span>
-        <button class="row-action-btn" data-action="up" data-id="${f.id}" title="Nach oben" ${i===0?"disabled":""}>↑</button>
-        <button class="row-action-btn" data-action="down" data-id="${f.id}" title="Nach unten" ${i===included.length-1?"disabled":""}>↓</button>
-        <button class="row-action-btn" data-action="remove" data-id="${f.id}" title="Spalte entfernen">✕</button>
+        <button class="colcfg-btn" data-action="up" data-id="${f.id}" title="Nach oben" ${i===0?"disabled":""}>↑</button>
+        <button class="colcfg-btn" data-action="down" data-id="${f.id}" title="Nach unten" ${i===included.length-1?"disabled":""}>↓</button>
+        <button class="colcfg-btn" data-action="remove" data-id="${f.id}" title="Spalte entfernen">✕</button>
       </div>`).join("") : `<div class="qv-empty">Keine Spalten ausgewählt — es würde eine leere Zeile exportiert.</div>`;
     document.getElementById("exportColsAvailable").innerHTML = availableIds.length ? availableIds.map(id=>`
-      <button class="btn ghost" data-action="add" data-id="${id}" style="font-size:12px;padding:5px 10px;">+ ${escapeHtml(CONFLUENCE_EXPORT_FIELD_MAP[id].label)}</button>`).join("")
+      <button class="btn ghost" data-action="add" data-id="${id}" style="font-size:12px;padding:5px 10px;">+ ${escapeHtml(getExportFieldMap()[id].label)}</button>`).join("")
       : `<span style="color:var(--text-faint);font-size:12.5px;">Alle verfügbaren Spalten sind bereits eingebunden.</span>`;
 
     document.querySelectorAll('#exportColsIncluded [data-action]').forEach(btn=>{
@@ -2005,7 +2129,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
         sap: { case:caseId, subject:"", status:"", priority:"", installation:"", systemNumber:"",
           system:"", component:"", reporterId:"", reporter:"", creatorId:"", creator:"",
           customerId:"", customer:"", createdOn:"", updatedOn:"", autoConfirmDate:"" },
-        own: { internalStatus:"NEW", jiraTicket:"", jiraLink:"", jiraStatus:"", nextSteps:"", notes:"", priorityOverride:"", archived:false, seqNumber:"", caseLink:"" },
+        own: { internalStatus:"NEW", jiraTicket:"", jiraLink:"", jiraStatus:"", nextSteps:"", notes:"", priorityOverride:"", archived:false, seqNumber:"", caseLink:"", customFields:{} },
         meta: { firstImportedAt:new Date().toISOString(), lastSeenImportAt:null, missingFromImport:false },
         sync: { confluenceSyncedAt:new Date().toISOString(), dirty:false }
       };
