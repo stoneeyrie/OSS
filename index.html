@@ -265,6 +265,7 @@
       <input type="file" id="fileJson" accept="application/json">
       <button class="btn ghost" id="btnSapStatusMap" title="Eigene Zuordnung SAP-Status → interner Status pflegen">⚙ Status-Mapping</button>
       <button class="btn ghost" id="btnColumnMapSettings" title="Gespeicherte Confluence-Spaltenzuordnung ansehen/ändern">⚙ Spalten-Mapping</button>
+      <button class="btn ghost" id="btnExportColsSettings" title="Reihenfolge & Auswahl der Spalten für den Confluence-Export anpassen">⚙ Export-Spalten</button>
       <button class="btn ghost danger" id="btnDeleteAll" title="Alle gespeicherten Fälle unwiderruflich löschen">🗑 Alles löschen</button>
     </div>
   </header>
@@ -615,6 +616,48 @@ let sapStatusMap = {}; // user-defined overrides: raw SAP status text -> interna
 try{ sapStatusMap = JSON.parse(localStorage.getItem("oss_tracker_sap_status_map")||"{}"); }catch(err){ sapStatusMap = {}; }
 let savedColMap = {}; // global Confluence column mapping (header -> field, "" = ignored), reused automatically on future imports
 try{ savedColMap = JSON.parse(localStorage.getItem("oss_tracker_confluence_colmap")||"{}"); }catch(err){ savedColMap = {}; }
+
+/* Catalog of fields that can be exported as a column when copying to
+   Confluence, plus which ones are included and in what order by default.
+   This exists so the export survives a change to the Confluence table
+   structure (an added/removed/reordered column) without silently shifting
+   every value one column over — the user can re-pick & reorder columns via
+   the "Export-Spalten" settings instead of us needing to hard-code them.
+   value(r, ctx) returns the plain-text cell content; ctx carries a few
+   values (status label, jira label/link, subject, computed auto-confirm
+   text) that are shared/expensive enough to compute once per row rather
+   than per field. "case", "jiraTicket" and "titleJira" get extra hyperlink
+   handling in htmlTableFromRows, keyed by field id rather than by column
+   position — see the comment there. */
+const CONFLUENCE_EXPORT_FIELDS = [
+  {id:"case", label:"OSS-Nummer", value:(r)=>r.case},
+  {id:"titleJira", label:"Titel / JIRA (kombiniert)", value:(r,ctx)=>[ctx.subject, ctx.jiraLabel].filter(Boolean).join(" – ")},
+  {id:"subject", label:"Titel (SAP, ohne JIRA)", value:(r,ctx)=>ctx.subject},
+  {id:"jiraTicket", label:"JIRA-Ticket", value:(r)=>r.own.jiraTicket||""},
+  {id:"internalStatus", label:"Interner Status", value:(r,ctx)=>ctx.sm.label},
+  {id:"sapStatus", label:"SAP-Status", value:(r)=>r.sap.status||""},
+  {id:"priority", label:"Priorität", value:(r)=>r.sap.priority||""},
+  {id:"component", label:"Komponente", value:(r)=>r.sap.component||""},
+  {id:"reporter", label:"Reporter", value:(r)=>r.sap.reporter||""},
+  {id:"customer", label:"Kunde", value:(r)=>r.sap.customer||""},
+  {id:"createdOn", label:"Gemeldet am", value:(r)=>fmtDate(r.sap.createdOn,true)},
+  {id:"updatedOn", label:"Letztes Update", value:(r)=>fmtDate(r.sap.updatedOn)},
+  {id:"autoConfirmDate", label:"Auto. Bestätigung", value:(r,ctx)=>ctx.autoConfirmText},
+  {id:"nextSteps", label:"Nächste Schritte", value:(r)=>(r.own.nextSteps||"").replace(/\n/g," / ")},
+  {id:"notes", label:"Notizen", value:(r)=>(r.own.notes||"").replace(/\n/g," / ")},
+  {id:"seqNumber", label:"Laufende Nummer", value:(r)=>r.own.seqNumber||""},
+];
+const CONFLUENCE_EXPORT_FIELD_MAP = Object.fromEntries(CONFLUENCE_EXPORT_FIELDS.map(f=>[f.id,f]));
+// Matches the export's previous, hard-coded column order exactly, so
+// existing users see no change until they deliberately open the settings.
+const DEFAULT_CONFLUENCE_EXPORT_COLUMNS = ["case","titleJira","internalStatus","priority","reporter","createdOn","updatedOn","autoConfirmDate","nextSteps"];
+let confluenceExportCols = [];
+try{ confluenceExportCols = JSON.parse(localStorage.getItem("oss_tracker_confluence_export_cols")||"null"); }catch(err){ confluenceExportCols = null; }
+if(!Array.isArray(confluenceExportCols)) confluenceExportCols = DEFAULT_CONFLUENCE_EXPORT_COLUMNS.slice();
+// Drop any id that no longer exists (e.g. after a future field is renamed/removed)
+// rather than letting it silently produce an empty/undefined column.
+confluenceExportCols = confluenceExportCols.filter(id=>CONFLUENCE_EXPORT_FIELD_MAP[id]);
+if(confluenceExportCols.length===0) confluenceExportCols = DEFAULT_CONFLUENCE_EXPORT_COLUMNS.slice();
 
 /* ---------------- CSV parsing (self-contained, no CDN dependency) ---------------- */
 function detectDelimiter(sample){
@@ -1493,34 +1536,23 @@ document.getElementById("btnDeleteAll").addEventListener("click", ()=>{
    (see htmlTableFromRows), so a case without a link doesn't leave a visibly
    empty column behind. */
 function confluenceRowData(r){
-  const sm = statusMeta(r.own.internalStatus);
-  const jiraLabel = r.own.jiraTicket ? `${r.own.jiraTicket}${r.own.jiraStatus?" ("+r.own.jiraStatus+")":""}` : "";
-  const subject = r.sap.subject || "";
-  const titleCell = [subject, jiraLabel].filter(Boolean).join(" – ");
+  const acInfo = getAutoConfirmInfo(r);
   // Use our corrected auto-confirm estimate here too when SAP's own date
   // looks implausible — an export that quietly carries a bogus far-future
   // date into Confluence is exactly the case that could cause a message to
   // slip through and get auto-closed for real. A trailing "*" flags that
   // it's a corrected estimate rather than SAP's own value.
-  const acInfo = getAutoConfirmInfo(r);
-  const autoConfirmText = acInfo.suspicious ? `${fmtTimestamp(acInfo.expectedT)} *` : fmtDate(r.sap.autoConfirmDate);
-  return {
-    cells: [
-      r.case,
-      titleCell,
-      sm.label,
-      r.sap.priority || "",
-      r.sap.reporter || "",
-      fmtDate(r.sap.createdOn, true),
-      fmtDate(r.sap.updatedOn),
-      autoConfirmText,
-      (r.own.nextSteps||"").replace(/\n/g," / ")
-    ],
+  const ctx = {
+    sm: statusMeta(r.own.internalStatus),
+    subject: r.sap.subject || "",
+    jiraLabel: r.own.jiraTicket ? `${r.own.jiraTicket}${r.own.jiraStatus?" ("+r.own.jiraStatus+")":""}` : "",
+    jiraLink: r.own.jiraLink || "",
     caseLink: r.own.caseLink || "",
-    subject,
-    jiraLabel,
-    jiraLink: r.own.jiraLink || ""
+    autoConfirmText: acInfo.suspicious ? `${fmtTimestamp(acInfo.expectedT)} *` : fmtDate(r.sap.autoConfirmDate)
   };
+  const cols = confluenceExportCols.map(id=>CONFLUENCE_EXPORT_FIELD_MAP[id]).filter(Boolean);
+  const cells = cols.map(f=>f.value(r, ctx));
+  return { r, ctx, cols, cells };
 }
 function confluenceCells(r){ return confluenceRowData(r).cells; }
 function confluenceLine(r){ return confluenceCells(r).join("\t"); }
@@ -1532,20 +1564,27 @@ function confluenceLine(r){ return confluenceCells(r).join("\t"); }
    (not just the plain cell strings), since caseLink/jiraLink only ever
    surface as hyperlinks on the OSS-Nummer / JIRA-Ticket text, never as
    columns of their own.
+   Hyperlinks are attached by field id (d.cols[i].id), not by column
+   position — so reordering or dropping columns in the export settings can
+   never cause a link to end up attached to the wrong cell.
    The markup is built as one compact string with no leading/trailing
    whitespace or line breaks between tags, since stray whitespace text nodes
    in a pasted HTML fragment can be rendered by some editors as an extra
    blank line/row above the table. */
 function htmlTableFromRows(rowData){
   const trs = rowData.map(d=>{
-    const tds = d.cells.map((c,i)=>{
-      if(i===0){ // OSS-Nummer column: wrap in the SAP-Fall-Link when present
-        return d.caseLink ? `<td><a href="${escapeHtml(d.caseLink)}">${escapeHtml(c)}</a></td>` : `<td>${escapeHtml(c)}</td>`;
+    const tds = d.cols.map((f,i)=>{
+      const c = d.cells[i];
+      if(f.id === "case"){
+        return d.ctx.caseLink ? `<td><a href="${escapeHtml(d.ctx.caseLink)}">${escapeHtml(c)}</a></td>` : `<td>${escapeHtml(c)}</td>`;
       }
-      if(i===1){ // Titel/JIRA column: subject stays plain, JIRA part gets its own link when present
-        let html = escapeHtml(d.subject);
-        if(d.jiraLabel){
-          const jiraHtml = d.jiraLink ? `<a href="${escapeHtml(d.jiraLink)}">${escapeHtml(d.jiraLink)}</a>` : escapeHtml(d.jiraLabel);
+      if(f.id === "jiraTicket"){
+        return d.ctx.jiraLink ? `<td><a href="${escapeHtml(d.ctx.jiraLink)}">${escapeHtml(c)}</a></td>` : `<td>${escapeHtml(c)}</td>`;
+      }
+      if(f.id === "titleJira"){
+        let html = escapeHtml(d.ctx.subject);
+        if(d.ctx.jiraLabel){
+          const jiraHtml = d.ctx.jiraLink ? `<a href="${escapeHtml(d.ctx.jiraLink)}">${escapeHtml(d.ctx.jiraLink)}</a>` : escapeHtml(d.ctx.jiraLabel);
           html += (html ? " – " : "") + jiraHtml;
         }
         return `<td>${html}</td>`;
@@ -1634,9 +1673,10 @@ document.getElementById("btnSapStatusMap").addEventListener("click", ()=>{
 });
 
 document.getElementById("btnConfluence").addEventListener("click", ()=>{
+  const colLabels = confluenceExportCols.map(id=>CONFLUENCE_EXPORT_FIELD_MAP[id]?.label).filter(Boolean).join(", ");
   openModal(`
     <h2>Für Confluence kopieren</h2>
-    <p class="desc">Erzeugt Zeilen passend zu den Spalten OSS-Nummer, Titel/JIRA, Status, Priorität, Meldender, Gemeldet am, Letztes Update, Auto. Bestätigung, Nächste Schritte. Die laufende Nummer wird bewusst nicht mitkopiert, da Confluence die Zeilennummerierung selbst übernimmt; der SAP-Fall-Link und der JIRA-Link (falls vorhanden) stecken als Verlinkung direkt in OSS-Nummer bzw. JIRA-Ticket, statt eine eigene Spalte zu belegen. Wirkt das SAP-Datum der Auto-Bestätigung unplausibel, wird stattdessen unsere Schätzung „letztes Update + 20 Tage" exportiert, erkennbar am Sternchen (*). Wird als echte Tabelle in die Zwischenablage gelegt (nicht nur als Tab-Text) — beim Einfügen in eine Confluence-Tabelle landet jede Zeile/Spalte dann korrekt getrennt statt gesammelt in einer Zelle.</p>
+    <p class="desc">Erzeugt Zeilen mit den Spalten: <strong>${escapeHtml(colLabels)}</strong> (<button class="link-btn" id="openExportColsFromHere" type="button">Spalten anpassen</button>). Der SAP-Fall-Link und der JIRA-Link (falls vorhanden) stecken als Verlinkung direkt in OSS-Nummer bzw. JIRA-Ticket, statt eine eigene Spalte zu belegen. Wirkt das SAP-Datum der Auto-Bestätigung unplausibel, wird stattdessen unsere Schätzung „letztes Update + 20 Tage" exportiert, erkennbar am Sternchen (*). Wird als echte Tabelle in die Zwischenablage gelegt (nicht nur als Tab-Text) — beim Einfügen in eine Confluence-Tabelle landet jede Zeile/Spalte dann korrekt getrennt statt gesammelt in einer Zelle.</p>
     <div class="checkline"><input type="checkbox" id="onlyDirty" checked> Nur ungesynchte Einträge (⏫)</div>
     <div class="checkline"><input type="checkbox" id="includeArchived"> Archivierte einschließen</div>
     <textarea class="export-out" id="exportOut" readonly></textarea>
@@ -1646,6 +1686,7 @@ document.getElementById("btnConfluence").addEventListener("click", ()=>{
       <button class="btn primary" id="btnMarkSynced">Kopieren &amp; als synchronisiert markieren</button>
     </div>
   `);
+  document.getElementById("openExportColsFromHere").onclick = ()=>{ closeModal(); openExportColumnsModal(); };
   const build = ()=>{
     const onlyDirty = document.getElementById("onlyDirty").checked;
     const includeArchived = document.getElementById("includeArchived").checked;
@@ -1729,6 +1770,77 @@ document.getElementById("btnColumnMapSettings").addEventListener("click", ()=>{
   }
   openColumnMappingModal(null, headers);
 });
+
+document.getElementById("btnExportColsSettings").addEventListener("click", ()=> openExportColumnsModal());
+
+/* Settings for confluenceExportCols: which fields get exported when copying
+   to Confluence, and in what order. Kept separate from the *import* column
+   mapping above (savedColMap) — that one reads a Confluence table INTO the
+   app, this one controls what gets written back OUT to it. Works on a local
+   working copy (workingCols) so "Abbrechen"/closing without saving doesn't
+   touch the persisted list. */
+function openExportColumnsModal(){
+  let workingCols = confluenceExportCols.slice();
+
+  const renderModalBody = ()=>{
+    const included = workingCols.map(id=>CONFLUENCE_EXPORT_FIELD_MAP[id]).filter(Boolean);
+    const availableIds = CONFLUENCE_EXPORT_FIELDS.map(f=>f.id).filter(id=>!workingCols.includes(id));
+    document.getElementById("exportColsIncluded").innerHTML = included.length ? included.map((f,i)=>`
+      <div class="qv-row" data-id="${f.id}" style="cursor:default;">
+        <span class="qv-case" style="min-width:22px;">${i+1}.</span>
+        <span class="qv-subject" style="flex:1;">${escapeHtml(f.label)}</span>
+        <button class="row-action-btn" data-action="up" data-id="${f.id}" title="Nach oben" ${i===0?"disabled":""}>↑</button>
+        <button class="row-action-btn" data-action="down" data-id="${f.id}" title="Nach unten" ${i===included.length-1?"disabled":""}>↓</button>
+        <button class="row-action-btn" data-action="remove" data-id="${f.id}" title="Spalte entfernen">✕</button>
+      </div>`).join("") : `<div class="qv-empty">Keine Spalten ausgewählt — es würde eine leere Zeile exportiert.</div>`;
+    document.getElementById("exportColsAvailable").innerHTML = availableIds.length ? availableIds.map(id=>`
+      <button class="btn ghost" data-action="add" data-id="${id}" style="font-size:12px;padding:5px 10px;">+ ${escapeHtml(CONFLUENCE_EXPORT_FIELD_MAP[id].label)}</button>`).join("")
+      : `<span style="color:var(--text-faint);font-size:12.5px;">Alle verfügbaren Spalten sind bereits eingebunden.</span>`;
+
+    document.querySelectorAll('#exportColsIncluded [data-action]').forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        const id = btn.dataset.id;
+        const idx = workingCols.indexOf(id);
+        if(idx===-1) return;
+        if(btn.dataset.action==="up" && idx>0){ [workingCols[idx-1],workingCols[idx]] = [workingCols[idx],workingCols[idx-1]]; }
+        else if(btn.dataset.action==="down" && idx<workingCols.length-1){ [workingCols[idx+1],workingCols[idx]] = [workingCols[idx],workingCols[idx+1]]; }
+        else if(btn.dataset.action==="remove"){ workingCols.splice(idx,1); }
+        renderModalBody();
+      });
+    });
+    document.querySelectorAll('#exportColsAvailable [data-action="add"]').forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        workingCols.push(btn.dataset.id);
+        renderModalBody();
+      });
+    });
+  };
+
+  openModal(`
+    <h2>Spalten für Confluence-Export</h2>
+    <p class="desc">Legt fest, welche Spalten beim Kopieren nach Confluence in welcher Reihenfolge exportiert werden — als Tab-Text und als eingefügte Tabelle. Wenn sich die Spaltenstruktur der Confluence-Seite ändert (z.B. eine neue Spalte kommt dazu), hier einfach anpassen, statt dass Werte verrutschen. OSS-Nummer und JIRA-Ticket bekommen den SAP-Fall-Link bzw. JIRA-Link automatisch mit, egal an welcher Position sie stehen.</p>
+    <div id="exportColsIncluded" style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;max-height:38vh;overflow-y:auto;"></div>
+    <div class="qv-title" style="margin-bottom:8px;">Weitere verfügbare Spalten</div>
+    <div id="exportColsAvailable" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px;"></div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="exportColsReset">Auf Standard zurücksetzen</button>
+      <button class="btn ghost" id="exportColsCancel">Abbrechen</button>
+      <button class="btn primary" id="exportColsDone">Speichern</button>
+    </div>
+  `);
+  renderModalBody();
+  document.getElementById("exportColsCancel").onclick = closeModal;
+  document.getElementById("exportColsReset").onclick = ()=>{
+    workingCols = DEFAULT_CONFLUENCE_EXPORT_COLUMNS.slice();
+    renderModalBody();
+  };
+  document.getElementById("exportColsDone").onclick = ()=>{
+    confluenceExportCols = workingCols.slice();
+    localStorage.setItem("oss_tracker_confluence_export_cols", JSON.stringify(confluenceExportCols));
+    closeModal();
+    showToast("Export-Spalten gespeichert.");
+  };
+}
 
 function openColumnMappingModal(rows, headers){
   const settingsOnly = !rows;
