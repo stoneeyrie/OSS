@@ -288,6 +288,7 @@
     <select id="fPriority"><option value="">Priorität: alle</option></select>
     <select id="fComponent"><option value="">Komponente: alle</option></select>
     <label class="checkline" style="margin:0;"><input type="checkbox" id="fHideArchived" checked> Archivierte ausblenden</label>
+    <label class="checkline" style="margin:0;"><input type="checkbox" id="fOnlyMismatch"> ⚠ Nur abweichende Status (Confluence ↔ SAP)</label>
     <button class="link-btn" id="btnResetFilter">Filter zurücksetzen</button>
     <div class="filter-count" id="filterCount"></div>
   </div>
@@ -910,6 +911,7 @@ function getFiltered(){
   const fp = document.getElementById("fPriority").value;
   const fc = document.getElementById("fComponent").value;
   const hideArchived = document.getElementById("fHideArchived").checked;
+  const onlyMismatch = document.getElementById("fOnlyMismatch").checked;
 
   let rows = ALL.filter(r=>{
     if(hideArchived && r.own.archived) return false;
@@ -917,6 +919,13 @@ function getFiltered(){
     if(fs && r.sap.status !== fs) return false;
     if(fp && r.sap.priority !== fp) return false;
     if(fc && r.sap.component !== fc) return false;
+    // Same status-matching used for the colored dots in the table (see
+    // computeStatusMatch): flags both a genuine mismatch and a SAP status
+    // that couldn't be mapped at all, since both need the same follow-up.
+    if(onlyMismatch){
+      const match = computeStatusMatch(r);
+      if(!match || match.cls !== "mismatch") return false;
+    }
     if(q){
       const hay = [r.case, r.own.seqNumber, r.sap.subject, r.sap.component, r.own.jiraTicket, r.own.notes, r.own.nextSteps]
         .join(" ").toLowerCase();
@@ -1106,11 +1115,15 @@ function renderStats(){
   const total = ALL.filter(r=>!r.own.archived).length;
   const counts = {};
   INTERNAL_STATUSES.forEach(s=>counts[s.v]=0);
-  let missing=0, dirty=0;
+  let missing=0, dirty=0, mismatched=0;
   ALL.forEach(r=>{
     if(!r.own.archived) counts[r.own.internalStatus] = (counts[r.own.internalStatus]||0)+1;
     if(r.meta.missingFromImport) missing++;
     if(r.sync.dirty && !r.own.archived) dirty++;
+    if(!r.own.archived){
+      const match = computeStatusMatch(r);
+      if(match && match.cls === "mismatch") mismatched++;
+    }
   });
   let html = `<span class="stat-chip"><b>${total}</b> aktiv</span>`;
   ["IN_PROGRESS","IN_TEST","WAITING_SAP","PROBLEM","DONE"].forEach(k=>{
@@ -1118,7 +1131,13 @@ function renderStats(){
   });
   if(dirty) html += `<span class="stat-chip warn">⏫ ungesynct <b>${dirty}</b></span>`;
   if(missing) html += `<span class="stat-chip warn">⚠ fehlt im Import <b>${missing}</b></span>`;
+  if(mismatched) html += `<span class="stat-chip warn" id="chipMismatch" style="cursor:pointer;" title="Klicken, um nur diese Meldungen anzuzeigen">⚠ Status weicht ab <b>${mismatched}</b></span>`;
   chips.innerHTML = html;
+  const chipMismatch = document.getElementById("chipMismatch");
+  if(chipMismatch) chipMismatch.onclick = ()=>{
+    document.getElementById("fOnlyMismatch").checked = true;
+    render();
+  };
 
   const last = localStorage.getItem("oss_tracker_last_import");
   document.getElementById("lastImportLabel").textContent = last
@@ -2095,7 +2114,7 @@ function openConflictModal(conflicts, summary, orphanCases){
 }
 
 /* ---------------- filter events ---------------- */
-["fSearch","fInternalStatus","fSapStatus","fPriority","fComponent","fHideArchived"].forEach(id=>{
+["fSearch","fInternalStatus","fSapStatus","fPriority","fComponent","fHideArchived","fOnlyMismatch"].forEach(id=>{
   document.getElementById(id).addEventListener("input", render);
   document.getElementById(id).addEventListener("change", render);
 });
@@ -2106,6 +2125,7 @@ document.getElementById("btnResetFilter").addEventListener("click", ()=>{
   document.getElementById("fPriority").value="";
   document.getElementById("fComponent").value="";
   document.getElementById("fHideArchived").checked=true;
+  document.getElementById("fOnlyMismatch").checked=false;
   render();
 });
 
