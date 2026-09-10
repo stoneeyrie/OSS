@@ -667,8 +667,8 @@ const CONFLUENCE_EXPORT_FIELDS = [
   {id:"createdOn", label:"Gemeldet am", value:(r)=>fmtDate(r.sap.createdOn,true)},
   {id:"updatedOn", label:"Letztes Update", value:(r)=>fmtDate(r.sap.updatedOn)},
   {id:"autoConfirmDate", label:"Auto. Bestätigung", value:(r,ctx)=>ctx.autoConfirmText},
-  {id:"nextSteps", label:"Nächste Schritte", value:(r)=>(r.own.nextSteps||"").replace(/\n/g," / ")},
-  {id:"notes", label:"Notizen", value:(r)=>(r.own.notes||"").replace(/\n/g," / ")},
+  {id:"nextSteps", label:"Nächste Schritte", value:(r)=>r.own.nextSteps||""},
+  {id:"notes", label:"Notizen", value:(r)=>r.own.notes||""},
   {id:"seqNumber", label:"Laufende Nummer", value:(r)=>r.own.seqNumber||""},
 ];
 /* The two functions below merge the fixed catalog above with whatever
@@ -720,6 +720,12 @@ function parseCSV(text){
     if(inQuotes){
       if(c === '"' && next === '"'){ field+='"'; i++; }
       else if(c === '"'){ inQuotes = false; }
+      // Embedded line breaks inside a quoted field (e.g. a multi-paragraph
+      // "Nächste Schritte"/"Notizen" cell from a Confluence CSV export) may
+      // use CRLF even though this file otherwise uses bare \n — normalize
+      // both to a single \n so the reimported text matches what's shown in
+      // the app, instead of picking up stray \r characters.
+      else if(c === '\r'){ if(next !== '\n'){ field += '\n'; } }
       else { field += c; }
     } else {
       if(c === '"'){ inQuotes = true; }
@@ -1680,8 +1686,17 @@ function confluenceRowData(r){
     autoConfirmText: acInfo.suspicious ? `${fmtTimestamp(acInfo.expectedT)} *` : fmtDate(r.sap.autoConfirmDate)
   };
   const cols = confluenceExportCols.map(id=>getExportFieldMap()[id]).filter(Boolean);
-  const cells = cols.map(f=>f.value(r, ctx));
-  return { r, ctx, cols, cells };
+  // rawCells keeps embedded line breaks (e.g. multi-paragraph "Nächste
+  // Schritte"/"Notizen") intact — needed so the HTML clipboard entry below
+  // can turn them into real <br> line breaks, which is what Confluence (and
+  // Excel/Word) actually renders as separate paragraphs in a pasted cell.
+  // cells is the flattened, single-line variant used for the plain-text TSV
+  // and the on-screen preview textarea, where a raw newline would either
+  // break the row structure (TSV has no per-cell quoting here) or make the
+  // preview look like extra rows — " / " keeps those forms readable and safe.
+  const rawCells = cols.map(f=>f.value(r, ctx));
+  const cells = rawCells.map(c=>String(c??"").replace(/\r?\n/g," / "));
+  return { r, ctx, cols, cells, rawCells };
 }
 function confluenceCells(r){ return confluenceRowData(r).cells; }
 function confluenceLine(r){ return confluenceCells(r).join("\t"); }
@@ -1718,7 +1733,7 @@ function htmlTableFromRows(rowData){
         }
         return `<td>${html}</td>`;
       }
-      return `<td>${escapeHtml(c).replace(/\n/g,"<br>")}</td>`;
+      return `<td>${escapeHtml(d.rawCells[i]).replace(/\n/g,"<br>")}</td>`;
     }).join("");
     return `<tr>${tds}</tr>`;
   }).join("");
