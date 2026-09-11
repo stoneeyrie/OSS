@@ -348,7 +348,10 @@
       <button type="button" class="status-filter-toggle" id="statusFilterToggle">Interner Status: alle</button>
       <div class="status-filter-panel" id="statusFilterPanel"></div>
     </div>
-    <select id="fSapStatus"><option value="">SAP-Status: alle</option></select>
+    <div class="status-filter" id="sapStatusFilter">
+      <button type="button" class="status-filter-toggle" id="sapStatusFilterToggle">SAP-Status: alle</button>
+      <div class="status-filter-panel" id="sapStatusFilterPanel"></div>
+    </div>
     <select id="fPriority"><option value="">Priorität: alle</option></select>
     <select id="fComponent"><option value="">Komponente: alle</option></select>
     <label class="checkline" style="margin:0;"><input type="checkbox" id="fHideArchived" checked> Archivierte ausblenden</label>
@@ -678,6 +681,7 @@ let sortKey = "updatedOn";
 let sortDir = -1;
 let selectedCases = new Set(); // case IDs currently checked for bulk actions
 let activeInternalStatuses = new Set(); // interner-Status-Filter: leer = alle anzeigen, sonst nur die ausgewählten
+let activeSapStatuses = new Set(); // SAP-Status-Filter: leer = alle anzeigen, sonst nur die ausgewählten
 let sapStatusMap = {}; // user-defined overrides: raw SAP status text -> internal status value
 try{ sapStatusMap = JSON.parse(localStorage.getItem("oss_tracker_sap_status_map")||"{}"); }catch(err){ sapStatusMap = {}; }
 let savedColMap = {}; // global Confluence column mapping (header -> field, "" = ignored), reused automatically on future imports
@@ -1001,10 +1005,10 @@ function populateFilterOptions(){
   const sapStatuses = [...new Set(ALL.map(r=>r.sap.status).filter(Boolean))].sort();
   const priorities = [...new Set(ALL.map(r=>r.sap.priority).filter(Boolean))].sort();
   const components = [...new Set(ALL.map(r=>r.sap.component).filter(Boolean))].sort();
-  mk("fSapStatus", sapStatuses, "SAP-Status: alle");
   mk("fPriority", priorities, "Priorität: alle");
   mk("fComponent", components, "Komponente: alle");
   renderStatusFilterPanel();
+  renderSapStatusFilterPanel(sapStatuses);
 }
 
 /* Mehrfachauswahl-Dropdown für den internen Status: das Panel wird bei
@@ -1050,9 +1054,58 @@ function updateStatusFilterToggleLabel(){
   else btn.textContent = `Interner Status: ${n} ausgewählt`;
 }
 
+/* Gleiches Prinzip wie oben, aber für den SAP-Status. Die Werte kommen nicht
+   aus einer festen Liste wie INTERNAL_STATUSES, sondern aus den aktuell
+   importierten Fällen (values-Parameter) — daher wird die Optionsliste
+   jedes Mal aus den Live-Daten aufgebaut, der Auswahlzustand bleibt aber
+   trotzdem erhalten, weil er in activeSapStatuses lebt statt im DOM. */
+function renderSapStatusFilterPanel(values){
+  const panel = document.getElementById("sapStatusFilterPanel");
+  // Ausgewählte Werte, die in den aktuellen Daten gar nicht mehr vorkommen
+  // (z.B. nach einem neuen Import), trotzdem am Ende noch anzeigen, damit
+  // die Auswahl nicht kommentarlos verschwindet.
+  const allValues = [...new Set([...values, ...activeSapStatuses])].sort();
+  panel.innerHTML = (allValues.length
+      ? allValues.map(v=>`
+        <label class="status-filter-item">
+          <input type="checkbox" data-status="${escapeHtml(v)}" ${activeSapStatuses.has(v)?"checked":""}>
+          <span>${escapeHtml(v)}</span>
+        </label>`).join("")
+      : `<div style="padding:6px 7px;color:var(--text-faint);font-size:12.5px;">Noch keine SAP-Status importiert.</div>`) +
+    `<div class="status-filter-footer">
+      <button type="button" class="link-btn" id="sapStatusFilterAll">Alle auswählen</button>
+      <button type="button" class="link-btn" id="sapStatusFilterClear">Zurücksetzen</button>
+    </div>`;
+  panel.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      if(cb.checked) activeSapStatuses.add(cb.dataset.status);
+      else activeSapStatuses.delete(cb.dataset.status);
+      updateSapStatusFilterToggleLabel();
+      render();
+    });
+  });
+  const allBtn = panel.querySelector("#sapStatusFilterAll");
+  if(allBtn) allBtn.addEventListener("click", ()=>{
+    activeSapStatuses = new Set(allValues);
+    updateSapStatusFilterToggleLabel();
+    render();
+  });
+  panel.querySelector("#sapStatusFilterClear").addEventListener("click", ()=>{
+    activeSapStatuses = new Set();
+    updateSapStatusFilterToggleLabel();
+    render();
+  });
+}
+function updateSapStatusFilterToggleLabel(){
+  const btn = document.getElementById("sapStatusFilterToggle");
+  const n = activeSapStatuses.size;
+  if(n===0) btn.textContent = "SAP-Status: alle";
+  else if(n===1) btn.textContent = "SAP-Status: " + [...activeSapStatuses][0];
+  else btn.textContent = `SAP-Status: ${n} ausgewählt`;
+}
+
 function getFiltered(){
   const q = document.getElementById("fSearch").value.trim().toLowerCase();
-  const fs = document.getElementById("fSapStatus").value;
   const fp = document.getElementById("fPriority").value;
   const fc = document.getElementById("fComponent").value;
   const hideArchived = document.getElementById("fHideArchived").checked;
@@ -1061,7 +1114,7 @@ function getFiltered(){
   let rows = ALL.filter(r=>{
     if(hideArchived && r.own.archived) return false;
     if(activeInternalStatuses.size && !activeInternalStatuses.has(r.own.internalStatus)) return false;
-    if(fs && r.sap.status !== fs) return false;
+    if(activeSapStatuses.size && !activeSapStatuses.has(r.sap.status)) return false;
     if(fp && r.sap.priority !== fp) return false;
     if(fc && r.sap.component !== fc) return false;
     // Same status-matching used for the colored dots in the table (see
@@ -2471,24 +2524,28 @@ function openConflictModal(conflicts, summary, orphanCases){
 }
 
 /* ---------------- filter events ---------------- */
-["fSearch","fSapStatus","fPriority","fComponent","fHideArchived","fOnlyMismatch"].forEach(id=>{
+["fSearch","fPriority","fComponent","fHideArchived","fOnlyMismatch"].forEach(id=>{
   document.getElementById(id).addEventListener("input", render);
   document.getElementById(id).addEventListener("change", render);
 });
-document.getElementById("statusFilterToggle").addEventListener("click", (e)=>{
-  e.stopPropagation();
-  document.getElementById("statusFilter").classList.toggle("open");
+[["statusFilterToggle","statusFilter"],["sapStatusFilterToggle","sapStatusFilter"]].forEach(([toggleId, wrapId])=>{
+  document.getElementById(toggleId).addEventListener("click", (e)=>{
+    e.stopPropagation();
+    document.getElementById(wrapId).classList.toggle("open");
+  });
 });
 document.addEventListener("click", (e)=>{
-  const w = document.getElementById("statusFilter");
-  if(w && !w.classList.contains("open")) return;
-  if(w && !w.contains(e.target)) w.classList.remove("open");
+  ["statusFilter","sapStatusFilter"].forEach(wrapId=>{
+    const w = document.getElementById(wrapId);
+    if(w && w.classList.contains("open") && !w.contains(e.target)) w.classList.remove("open");
+  });
 });
 document.getElementById("btnResetFilter").addEventListener("click", ()=>{
   document.getElementById("fSearch").value="";
   activeInternalStatuses = new Set();
   updateStatusFilterToggleLabel();
-  document.getElementById("fSapStatus").value="";
+  activeSapStatuses = new Set();
+  updateSapStatusFilterToggleLabel();
   document.getElementById("fPriority").value="";
   document.getElementById("fComponent").value="";
   document.getElementById("fHideArchived").checked=true;
