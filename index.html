@@ -813,15 +813,30 @@ function parseCSV(text){
   });
 }
 
-/* Map SAP export headers -> internal field names (case-insensitive, tolerant) */
+/* Map SAP export headers -> internal field names (case-insensitive, tolerant).
+   Enthält sowohl die englischen Standard-Header von me.sap.com/cl als auch
+   gängige deutsche Varianten, falls der Export in einer deutschen SAP-Oberfläche
+   erzeugt wurde. */
 const HEADER_MAP = {
-  "CASE":"case", "SUBJECT":"subject", "STATUS":"status", "PRIORITY":"priority",
-  "INSTALLATION":"installation", "SYSTEM NUMBER":"systemNumber", "SYSTEM":"system",
-  "COMPONENT":"component", "REPORTER ID":"reporterId", "REPORTER":"reporter",
-  "CREATOR ID":"creatorId", "CREATOR":"creator", "CUSTOMER ID":"customerId",
-  "CUSTOMER":"customer", "CREATED ON (UTC)":"createdOn", "UPDATED ON (UTC)":"updatedOn",
-  "AUTO-CONFIRM DATE":"autoConfirmDate"
+  "CASE":"case", "FALL":"case", "MELDUNG":"case", "MELDUNGSNUMMER":"case", "OSS-MELDUNG":"case",
+  "SUBJECT":"subject", "BETREFF":"subject", "TITEL":"subject",
+  "STATUS":"status",
+  "PRIORITY":"priority", "PRIORITÄT":"priority",
+  "INSTALLATION":"installation",
+  "SYSTEM NUMBER":"systemNumber", "SYSTEMNUMMER":"systemNumber",
+  "SYSTEM":"system",
+  "COMPONENT":"component", "KOMPONENTE":"component",
+  "REPORTER ID":"reporterId", "MELDER-ID":"reporterId",
+  "REPORTER":"reporter", "MELDER":"reporter",
+  "CREATOR ID":"creatorId", "ERSTELLER-ID":"creatorId",
+  "CREATOR":"creator", "ERSTELLER":"creator",
+  "CUSTOMER ID":"customerId", "KUNDEN-ID":"customerId",
+  "CUSTOMER":"customer", "KUNDE":"customer",
+  "CREATED ON (UTC)":"createdOn", "ERSTELLT AM (UTC)":"createdOn", "ERSTELLT AM":"createdOn",
+  "UPDATED ON (UTC)":"updatedOn", "AKTUALISIERT AM (UTC)":"updatedOn", "AKTUALISIERT AM":"updatedOn",
+  "AUTO-CONFIRM DATE":"autoConfirmDate", "DATUM DER AUTOMATISCHEN BESTÄTIGUNG":"autoConfirmDate"
 };
+
 function normalizeRow(raw){
   const out = {};
   Object.keys(raw).forEach(h=>{
