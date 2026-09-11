@@ -66,9 +66,12 @@
   .stat-chip.warn{border-color:rgba(223,107,100,0.4);color:var(--red);}
   .stat-chip.warn b{color:var(--red);}
 
-  .actions{display:flex;gap:8px;flex-wrap:wrap;}
+  .actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+  .action-group{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-right:12px;margin-right:4px;border-right:1px solid var(--border);}
+  .action-group:last-child{border-right:none;padding-right:0;margin-right:0;}
   .btn{
     padding:7px 13px;border-radius:var(--radius);border:1px solid var(--border);
+    border-left:3px solid transparent;
     background:var(--bg-elevated-2);color:var(--text);font-size:12.5px;font-weight:500;
     display:inline-flex;align-items:center;gap:6px;transition:background .12s,border-color .12s;
   }
@@ -80,6 +83,14 @@
   .btn.ghost{background:transparent;}
   .btn:disabled{opacity:.4;cursor:not-allowed;}
   input[type=file]{display:none;}
+  /* thematische Farbcodierung der Button-Gruppen im Header (nur linker Rand,
+     damit die Buttons sich weiterhin wie eine Familie anfühlen) */
+  .btn-grp-import{border-left-color:var(--blue);}
+  .btn-grp-sync{border-left-color:var(--green);}
+  .btn-grp-links{border-left-color:var(--purple);}
+  .btn-grp-settings{border-left-color:var(--amber);}
+  .btn-link-unset{opacity:.6;border-left-style:dashed;}
+  svg.icon{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
 
   /* ---------- filter bar ---------- */
   .filterbar{
@@ -267,19 +278,32 @@
     </div>
     <div class="stats" id="statChips"></div>
     <div class="actions">
-      <button class="btn" id="btnImportCsv">Case-List importieren</button>
-      <input type="file" id="fileCsv" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-      <button class="btn" id="btnConfluence">Für Confluence kopieren</button>
-      <button class="btn" id="btnConfluenceImport">Confluence abgleichen</button>
-      <input type="file" id="fileConfluence" accept=".csv,.tsv,text/csv,text/tab-separated-values">
-      <button class="btn ghost" id="btnExportJson">JSON-Backup</button>
-      <button class="btn ghost" id="btnImportJson">JSON laden</button>
-      <input type="file" id="fileJson" accept="application/json">
-      <button class="btn ghost" id="btnSapStatusMap" title="Eigene Zuordnung SAP-Status → interner Status pflegen">⚙ Status-Mapping</button>
-      <button class="btn ghost" id="btnColumnMapSettings" title="Gespeicherte Confluence-Spaltenzuordnung ansehen/ändern">⚙ Spalten-Mapping</button>
-      <button class="btn ghost" id="btnExportColsSettings" title="Reihenfolge & Auswahl der Spalten für den Confluence-Export anpassen">⚙ Export-Spalten</button>
-      <button class="btn ghost" id="btnCustomFields" title="Eigene, pro Fall pflegbare Felder anlegen (für Confluence-Spalten ohne bestehende Entsprechung)">⚙ Eigene Felder</button>
-      <button class="btn ghost danger" id="btnDeleteAll" title="Alle gespeicherten Fälle unwiderruflich löschen">🗑 Alles löschen</button>
+      <div class="action-group" data-group="import" title="Daten-Import">
+        <button class="btn btn-grp-import" id="btnImportCsv"><svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Case-List importieren</button>
+        <input type="file" id="fileCsv" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <button class="btn btn-grp-import" id="btnConfluenceImport"><svg class="icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg> Confluence abgleichen</button>
+        <input type="file" id="fileConfluence" accept=".csv,.tsv,text/csv,text/tab-separated-values">
+      </div>
+      <div class="action-group" data-group="sync" title="Export & Sync">
+        <button class="btn btn-grp-sync" id="btnConfluence"><svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Für Confluence kopieren</button>
+        <button class="btn ghost btn-grp-sync" id="btnExportJson"><svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> JSON-Backup</button>
+        <button class="btn ghost btn-grp-sync" id="btnImportJson"><svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> JSON laden</button>
+        <input type="file" id="fileJson" accept="application/json">
+      </div>
+      <div class="action-group" data-group="links" title="Schnellzugriff-Links">
+        <button class="btn btn-grp-links" id="btnQuickSap"><svg class="icon" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg> SAP-Cases</button>
+        <button class="btn btn-grp-links" id="btnQuickConfluence"><svg class="icon" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg> Confluence-Seite</button>
+        <button class="btn ghost btn-grp-links" id="btnQuickLinksSettings" title="Links bearbeiten"><svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg> Links</button>
+      </div>
+      <div class="action-group" data-group="settings" title="Einstellungen">
+        <button class="btn ghost btn-grp-settings" id="btnSapStatusMap" title="Eigene Zuordnung SAP-Status → interner Status pflegen"><svg class="icon" viewBox="0 0 24 24"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/></svg> Status-Mapping</button>
+        <button class="btn ghost btn-grp-settings" id="btnColumnMapSettings" title="Gespeicherte Confluence-Spaltenzuordnung ansehen/ändern"><svg class="icon" viewBox="0 0 24 24"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/></svg> Spalten-Mapping</button>
+        <button class="btn ghost btn-grp-settings" id="btnExportColsSettings" title="Reihenfolge & Auswahl der Spalten für den Confluence-Export anpassen"><svg class="icon" viewBox="0 0 24 24"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/></svg> Export-Spalten</button>
+        <button class="btn ghost btn-grp-settings" id="btnCustomFields" title="Eigene, pro Fall pflegbare Felder anlegen (für Confluence-Spalten ohne bestehende Entsprechung)"><svg class="icon" viewBox="0 0 24 24"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/></svg> Eigene Felder</button>
+      </div>
+      <div class="action-group" data-group="danger" title="Gefahrenzone">
+        <button class="btn ghost danger" id="btnDeleteAll" title="Alle gespeicherten Fälle unwiderruflich löschen"><svg class="icon" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> Alles löschen</button>
+      </div>
     </div>
   </header>
 
@@ -700,6 +724,17 @@ if(!Array.isArray(confluenceExportCols)) confluenceExportCols = DEFAULT_CONFLUEN
 // rather than letting it silently produce an empty/undefined column.
 confluenceExportCols = confluenceExportCols.filter(id=>getExportFieldMap()[id]);
 if(confluenceExportCols.length===0) confluenceExportCols = DEFAULT_CONFLUENCE_EXPORT_COLUMNS.slice();
+
+/* ---------------- Schnellzugriff-Links (SAP me.sap.com/cl, Confluence-Seite) ---------------- */
+let quickLinks = { sap:"", confluence:"" };
+try{ quickLinks = Object.assign({sap:"",confluence:""}, JSON.parse(localStorage.getItem("oss_tracker_quick_links")||"{}")); }catch(err){ quickLinks = {sap:"",confluence:""}; }
+
+function normalizeUrl(u){
+  u = (u||"").trim();
+  if(!u) return "";
+  if(!/^https?:\/\//i.test(u)) u = "https://" + u;
+  return u;
+}
 
 /* ---------------- CSV parsing (self-contained, no CDN dependency) ---------------- */
 function detectDelimiter(sample){
@@ -1775,6 +1810,67 @@ async function copyCaseToConfluence(caseId){
 }
 
 /* ---------------- SAP-Status → interner Status: custom mapping ---------------- */
+/* ---------------- Schnellzugriff-Links: Buttons & Einstellungs-Modal ---------------- */
+function updateQuickLinkButtons(){
+  const sapBtn = document.getElementById("btnQuickSap");
+  const confBtn = document.getElementById("btnQuickConfluence");
+  if(quickLinks.sap){
+    sapBtn.title = quickLinks.sap;
+    sapBtn.classList.remove("btn-link-unset");
+  } else {
+    sapBtn.title = "Noch nicht hinterlegt – klicken zum Einrichten";
+    sapBtn.classList.add("btn-link-unset");
+  }
+  if(quickLinks.confluence){
+    confBtn.title = quickLinks.confluence;
+    confBtn.classList.remove("btn-link-unset");
+  } else {
+    confBtn.title = "Noch nicht hinterlegt – klicken zum Einrichten";
+    confBtn.classList.add("btn-link-unset");
+  }
+}
+
+function openQuickLinksModal(){
+  openModal(`
+    <h2>🔗 Schnellzugriff-Links</h2>
+    <p class="desc">Hinterlege hier feste Links, die oben als Buttons erscheinen und in einem neuen Tab öffnen. Fehlt ein Protokoll (https://), wird es automatisch ergänzt.</p>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--text-dim);">
+        SAP (me.sap.com/cl – Case-Liste)
+        <input type="text" id="qlSap" value="${escapeHtml(quickLinks.sap)}" placeholder="me.sap.com/cl/..." style="background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:var(--radius);font-size:12.5px;">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--text-dim);">
+        Confluence-Seite mit den OSS-Meldungen
+        <input type="text" id="qlConfluence" value="${escapeHtml(quickLinks.confluence)}" placeholder="https://…atlassian.net/wiki/…" style="background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:var(--radius);font-size:12.5px;">
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="qlCancel">Abbrechen</button>
+      <button class="btn primary" id="qlSave">Speichern</button>
+    </div>
+  `);
+  document.getElementById("qlCancel").onclick = closeModal;
+  document.getElementById("qlSave").onclick = ()=>{
+    quickLinks.sap = normalizeUrl(document.getElementById("qlSap").value);
+    quickLinks.confluence = normalizeUrl(document.getElementById("qlConfluence").value);
+    localStorage.setItem("oss_tracker_quick_links", JSON.stringify(quickLinks));
+    updateQuickLinkButtons();
+    closeModal();
+    showToast("Links gespeichert.");
+  };
+}
+
+document.getElementById("btnQuickSap").addEventListener("click", ()=>{
+  if(quickLinks.sap) window.open(quickLinks.sap, "_blank", "noopener");
+  else openQuickLinksModal();
+});
+document.getElementById("btnQuickConfluence").addEventListener("click", ()=>{
+  if(quickLinks.confluence) window.open(quickLinks.confluence, "_blank", "noopener");
+  else openQuickLinksModal();
+});
+document.getElementById("btnQuickLinksSettings").addEventListener("click", openQuickLinksModal);
+updateQuickLinkButtons();
+
 document.getElementById("btnSapStatusMap").addEventListener("click", ()=>{
   const distinctValues = [...new Set(ALL.map(r=>r.sap.status).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"de"));
   if(distinctValues.length === 0){
