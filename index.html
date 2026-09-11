@@ -77,7 +77,11 @@
   }
   .btn:hover{background:var(--bg-hover);border-color:#3a4358;}
   .btn.danger{color:var(--red);border-color:var(--red);}
-  .btn.danger:hover{background:var(--red-soft);}
+  .btn.danger:hover{background:var(--red);border-color:var(--red);color:#fff;}
+  .btn.btn-grp-import:hover{background:var(--blue);border-color:var(--blue);color:#fff;}
+  .btn.btn-grp-sync:hover{background:var(--green);border-color:var(--green);color:#fff;}
+  .btn.btn-grp-links:hover{background:var(--purple);border-color:var(--purple);color:#fff;}
+  .btn.btn-grp-settings:hover{background:var(--amber);border-color:var(--amber);color:#1b1405;}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#1b1405;font-weight:600;}
   .btn.primary:hover{background:var(--accent-strong);}
   .btn.ghost{background:transparent;}
@@ -104,6 +108,26 @@
   .filterbar input[type=text]{width:230px;}
   .filterbar select:focus,.filterbar input:focus{outline:none;border-color:var(--accent);}
   .filter-count{color:var(--text-faint);font-size:12px;margin-left:auto;font-family:var(--mono);}
+
+  /* ---------- multi-select status filter ---------- */
+  .status-filter{position:relative;}
+  .status-filter-toggle{
+    background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);
+    padding:6px 10px;border-radius:var(--radius);font-size:12.5px;font-family:var(--sans);
+    cursor:pointer;white-space:nowrap;
+  }
+  .status-filter-toggle:hover{border-color:var(--accent);}
+  .status-filter.open .status-filter-toggle{border-color:var(--accent);color:var(--accent);}
+  .status-filter-panel{
+    display:none;position:absolute;top:calc(100% + 5px);left:0;z-index:30;min-width:240px;
+    background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:var(--radius);
+    padding:6px;box-shadow:0 10px 28px rgba(0,0,0,.45);
+  }
+  .status-filter.open .status-filter-panel{display:block;}
+  .status-filter-item{display:flex;align-items:center;gap:8px;padding:6px 7px;border-radius:5px;font-size:12.5px;cursor:pointer;color:var(--text);}
+  .status-filter-item:hover{background:var(--bg-hover);}
+  .status-filter-item input{margin:0;accent-color:var(--accent);cursor:pointer;}
+  .status-filter-footer{display:flex;justify-content:space-between;gap:8px;padding:7px 7px 2px;border-top:1px solid var(--border);margin-top:4px;}
   .link-btn{background:none;border:none;color:var(--text-faint);font-size:12px;text-decoration:underline;padding:0;}
   .link-btn:hover{color:var(--text);}
 
@@ -320,7 +344,10 @@
 
   <div class="filterbar">
     <input type="text" id="fSearch" placeholder="Suche: OSS-Nr, Titel, Komponente, JIRA…">
-    <select id="fInternalStatus"><option value="">Interner Status: alle</option></select>
+    <div class="status-filter" id="statusFilter">
+      <button type="button" class="status-filter-toggle" id="statusFilterToggle">Interner Status: alle</button>
+      <div class="status-filter-panel" id="statusFilterPanel"></div>
+    </div>
     <select id="fSapStatus"><option value="">SAP-Status: alle</option></select>
     <select id="fPriority"><option value="">Priorität: alle</option></select>
     <select id="fComponent"><option value="">Komponente: alle</option></select>
@@ -650,6 +677,7 @@ let ALL = [];        // all records from DB, in memory
 let sortKey = "updatedOn";
 let sortDir = -1;
 let selectedCases = new Set(); // case IDs currently checked for bulk actions
+let activeInternalStatuses = new Set(); // interner-Status-Filter: leer = alle anzeigen, sonst nur die ausgewählten
 let sapStatusMap = {}; // user-defined overrides: raw SAP status text -> internal status value
 try{ sapStatusMap = JSON.parse(localStorage.getItem("oss_tracker_sap_status_map")||"{}"); }catch(err){ sapStatusMap = {}; }
 let savedColMap = {}; // global Confluence column mapping (header -> field, "" = ignored), reused automatically on future imports
@@ -976,19 +1004,54 @@ function populateFilterOptions(){
   mk("fSapStatus", sapStatuses, "SAP-Status: alle");
   mk("fPriority", priorities, "Priorität: alle");
   mk("fComponent", components, "Komponente: alle");
-  const iEl = document.getElementById("fInternalStatus");
-  if(!iEl.dataset.optSig){
-    iEl.dataset.optSig = "1";
-    const cur = iEl.value;
-    iEl.innerHTML = `<option value="">Interner Status: alle</option>` +
-      INTERNAL_STATUSES.map(s=>`<option value="${s.v}">${s.label}</option>`).join("");
-    iEl.value = cur;
-  }
+  renderStatusFilterPanel();
+}
+
+/* Mehrfachauswahl-Dropdown für den internen Status: das Panel wird bei
+   jedem render() neu aufgebaut, aber der Auswahlzustand lebt in
+   activeInternalStatuses (nicht im DOM), daher geht dabei nichts verloren —
+   anders als beim alten <select> muss hier also nichts destruktiv geschützt
+   werden. */
+function renderStatusFilterPanel(){
+  const panel = document.getElementById("statusFilterPanel");
+  panel.innerHTML = INTERNAL_STATUSES.map(s=>`
+    <label class="status-filter-item">
+      <input type="checkbox" data-status="${s.v}" ${activeInternalStatuses.has(s.v)?"checked":""}>
+      <span class="badge dot ${s.cls}">${s.label}</span>
+    </label>`).join("") +
+    `<div class="status-filter-footer">
+      <button type="button" class="link-btn" id="statusFilterAll">Alle auswählen</button>
+      <button type="button" class="link-btn" id="statusFilterClear">Zurücksetzen</button>
+    </div>`;
+  panel.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      if(cb.checked) activeInternalStatuses.add(cb.dataset.status);
+      else activeInternalStatuses.delete(cb.dataset.status);
+      updateStatusFilterToggleLabel();
+      render();
+    });
+  });
+  panel.querySelector("#statusFilterAll").addEventListener("click", ()=>{
+    activeInternalStatuses = new Set(INTERNAL_STATUSES.map(s=>s.v));
+    updateStatusFilterToggleLabel();
+    render();
+  });
+  panel.querySelector("#statusFilterClear").addEventListener("click", ()=>{
+    activeInternalStatuses = new Set();
+    updateStatusFilterToggleLabel();
+    render();
+  });
+}
+function updateStatusFilterToggleLabel(){
+  const btn = document.getElementById("statusFilterToggle");
+  const n = activeInternalStatuses.size;
+  if(n===0) btn.textContent = "Interner Status: alle";
+  else if(n===1) btn.textContent = "Interner Status: " + statusMeta([...activeInternalStatuses][0]).label;
+  else btn.textContent = `Interner Status: ${n} ausgewählt`;
 }
 
 function getFiltered(){
   const q = document.getElementById("fSearch").value.trim().toLowerCase();
-  const fi = document.getElementById("fInternalStatus").value;
   const fs = document.getElementById("fSapStatus").value;
   const fp = document.getElementById("fPriority").value;
   const fc = document.getElementById("fComponent").value;
@@ -997,7 +1060,7 @@ function getFiltered(){
 
   let rows = ALL.filter(r=>{
     if(hideArchived && r.own.archived) return false;
-    if(fi && r.own.internalStatus !== fi) return false;
+    if(activeInternalStatuses.size && !activeInternalStatuses.has(r.own.internalStatus)) return false;
     if(fs && r.sap.status !== fs) return false;
     if(fp && r.sap.priority !== fp) return false;
     if(fc && r.sap.component !== fc) return false;
@@ -2408,13 +2471,23 @@ function openConflictModal(conflicts, summary, orphanCases){
 }
 
 /* ---------------- filter events ---------------- */
-["fSearch","fInternalStatus","fSapStatus","fPriority","fComponent","fHideArchived","fOnlyMismatch"].forEach(id=>{
+["fSearch","fSapStatus","fPriority","fComponent","fHideArchived","fOnlyMismatch"].forEach(id=>{
   document.getElementById(id).addEventListener("input", render);
   document.getElementById(id).addEventListener("change", render);
 });
+document.getElementById("statusFilterToggle").addEventListener("click", (e)=>{
+  e.stopPropagation();
+  document.getElementById("statusFilter").classList.toggle("open");
+});
+document.addEventListener("click", (e)=>{
+  const w = document.getElementById("statusFilter");
+  if(w && !w.classList.contains("open")) return;
+  if(w && !w.contains(e.target)) w.classList.remove("open");
+});
 document.getElementById("btnResetFilter").addEventListener("click", ()=>{
   document.getElementById("fSearch").value="";
-  document.getElementById("fInternalStatus").value="";
+  activeInternalStatuses = new Set();
+  updateStatusFilterToggleLabel();
   document.getElementById("fSapStatus").value="";
   document.getElementById("fPriority").value="";
   document.getElementById("fComponent").value="";
