@@ -998,6 +998,23 @@ function escapeHtml(s){
   return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
+/* Normalisiert Freitext-Werte aus SAP-Exporten für Dropdown-Optionen UND für
+   den Vergleich beim Filtern. Fängt Fälle ab, in denen zwei Werte optisch
+   identisch aussehen, aber unterschiedliche Zeichen enthalten — z.B. ein
+   geschütztes Leerzeichen (\u00A0) statt eines normalen, oder ein Tab/Zeilen-
+   umbruch, den der Browser beim Rendern einer <option> lautlos in ein
+   normales Leerzeichen umwandelt. Ohne diese Normalisierung matcht die
+   Dropdown-Auswahl dann nie einen echten Datensatz, obwohl der Wert sichtbar
+   exakt gleich aussieht ("steht da, aber matcht nie"). Wird auf beiden Seiten
+   des Vergleichs angewendet, damit auch bereits importierte (potenziell
+   betroffene) Datensätze ohne Re-Import funktionieren. */
+function normFilterValue(s){
+  return String(s??"")
+    .replace(/[\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\t\r\n]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function populateFilterOptions(){
   const mk = (sel, values, placeholder)=>{
     const el = document.getElementById(sel);
@@ -1018,8 +1035,8 @@ function populateFilterOptions(){
     el.value = current;
   };
   const sapStatuses = [...new Set(ALL.map(r=>r.sap.status).filter(Boolean))].sort();
-  const priorities = [...new Set(ALL.map(r=>r.sap.priority).filter(Boolean))].sort();
-  const components = [...new Set(ALL.map(r=>r.sap.component).filter(Boolean))].sort();
+  const priorities = [...new Set(ALL.map(r=>normFilterValue(r.sap.priority)).filter(Boolean))].sort();
+  const components = [...new Set(ALL.map(r=>normFilterValue(r.sap.component)).filter(Boolean))].sort();
   mk("fPriority", priorities, "Priorität: alle");
   mk("fComponent", components, "Komponente: alle");
   renderStatusFilterPanel();
@@ -1130,8 +1147,8 @@ function getFiltered(){
     if(hideArchived && r.own.archived) return false;
     if(activeInternalStatuses.size && !activeInternalStatuses.has(r.own.internalStatus)) return false;
     if(activeSapStatuses.size && !activeSapStatuses.has(r.sap.status)) return false;
-    if(fp && r.sap.priority !== fp) return false;
-    if(fc && r.sap.component !== fc) return false;
+    if(fp && normFilterValue(r.sap.priority) !== fp) return false;
+    if(fc && normFilterValue(r.sap.component) !== fc) return false;
     // Same status-matching used for the colored dots in the table (see
     // computeStatusMatch): flags both a genuine mismatch and a SAP status
     // that couldn't be mapped at all, since both need the same follow-up.
