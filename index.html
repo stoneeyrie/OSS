@@ -242,6 +242,12 @@
   .sap-readout .r{display:flex;justify-content:space-between;gap:10px;}
   .sap-readout .r span:first-child{color:var(--text-faint);}
   .sap-readout .r span:last-child{font-family:var(--mono);text-align:right;}
+  .sap-readout .r.diff-r{flex-direction:column;gap:2px;}
+  .sap-readout .r.diff-r span:last-child{text-align:left;white-space:pre-wrap;word-break:break-word;}
+  mark.diff{border-radius:3px;padding:0 2px;}
+  mark.diff-conf{background:var(--blue-soft);color:var(--blue);}
+  mark.diff-local{background:var(--amber-soft);color:var(--amber);}
+  .diff-hint{font-size:11.5px;color:var(--text-faint);}
   .divider{height:1px;background:var(--border);margin:2px 0;}
   .drawer-footer{display:flex;gap:8px;margin-top:auto;padding-top:10px;}
   .missing-flag{
@@ -310,9 +316,6 @@
       </div>
       <div class="action-group" data-group="sync" title="Export & Sync">
         <button class="btn btn-grp-sync" id="btnConfluence"><svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Für Confluence kopieren</button>
-        <button class="btn ghost btn-grp-sync" id="btnExportJson"><svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> JSON-Backup</button>
-        <button class="btn ghost btn-grp-sync" id="btnImportJson"><svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> JSON laden</button>
-        <input type="file" id="fileJson" accept="application/json">
       </div>
       <div class="action-group" data-group="links" title="Schnellzugriff-Links">
         <button class="btn btn-grp-links" id="btnQuickSap"><svg class="icon" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg> SAP-Cases</button>
@@ -390,7 +393,7 @@
       <tbody id="tbody"></tbody>
     </table>
     <div class="empty-state" id="emptyState" style="display:none;">
-      Noch keine Daten. Importiere eine SAP-for-Me-Case-List (CSV) oder lade ein JSON-Backup.
+      Noch keine Daten. Importiere eine SAP-for-Me-Case-List (CSV).
     </div>
   </div>
 </div>
@@ -1200,8 +1203,24 @@ function getFiltered(){
   return rows;
 }
 
+/* Eigene Felder als zusätzliche Tabellenspalten (hinter „Nächste Schritte“,
+   vor der Aktionsspalte). Wird bei jedem render() neu aufgebaut, damit
+   Anlegen/Umbenennen/Entfernen im „Eigene Felder“-Dialog sofort sichtbar ist. */
+function syncCustomFieldHeaderCols(){
+  const tr = document.querySelector("#mainTable thead tr");
+  tr.querySelectorAll("th.cf-col").forEach(th=>th.remove());
+  const actionTh = tr.lastElementChild;
+  customFieldDefs.forEach(cf=>{
+    const th = document.createElement("th");
+    th.className = "cf-col";
+    th.textContent = cf.label;
+    tr.insertBefore(th, actionTh);
+  });
+}
+
 function render(){
   populateFilterOptions();
+  syncCustomFieldHeaderCols();
   const rows = getFiltered();
   const tbody = document.getElementById("tbody");
   document.getElementById("emptyState").style.display = ALL.length ? "none" : "block";
@@ -1238,6 +1257,7 @@ function render(){
       <td class="mono">${fmtDate(r.sap.updatedOn,true)}</td>
       <td class="mono">${autoConfirmDisplay(r).html}</td>
       <td class="next">${escapeHtml(r.own.nextSteps)||""}</td>
+      ${customFieldDefs.map(cf=>`<td class="next">${escapeHtml((r.own.customFields&&r.own.customFields[cf.id])||"")}</td>`).join("")}
       <td style="white-space:nowrap;">
         ${r.sync.dirty?'<span class="dirty-dot" title="noch nicht nach Confluence übertragen"></span>':""}
         <button class="row-action-btn" data-case="${escapeHtml(r.case)}" title="Diese Meldung für Confluence kopieren">📋</button>
@@ -1762,62 +1782,12 @@ document.getElementById("fileCsv").addEventListener("change", async (e)=>{
   document.getElementById("modalOk").onclick = closeModal;
 });
 
-/* ---------------- JSON backup export/import ---------------- */
-document.getElementById("btnExportJson").addEventListener("click", async ()=>{
-  const data = await dbGetAll();
-  const payload = { exportedAt: new Date().toISOString(), version: 1, records: data };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const stamp = new Date().toISOString().slice(0,10);
-  a.href = url; a.download = `oss-tracker-backup-${stamp}.json`;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-  showToast("JSON-Backup heruntergeladen.");
-});
-document.getElementById("btnImportJson").addEventListener("click", ()=>{
-  document.getElementById("fileJson").click();
-});
-document.getElementById("fileJson").addEventListener("change", async (e)=>{
-  const file = e.target.files[0];
-  if(!file) return;
-  try{
-    const text = await file.text();
-    const payload = JSON.parse(text);
-    const records = Array.isArray(payload) ? payload : payload.records;
-    if(!Array.isArray(records)) throw new Error("Kein gültiges Backup-Format.");
-    openModal(`
-      <h2>JSON-Backup laden</h2>
-      <p class="desc">${escapeHtml(file.name)} enthält ${records.length} Einträge.</p>
-      <div class="checkline"><input type="checkbox" id="jsonReplace"> Bestehende Daten vorher komplett löschen (statt zusammenzuführen)</div>
-      <div class="modal-footer">
-        <button class="btn ghost" id="jsonCancel">Abbrechen</button>
-        <button class="btn primary" id="jsonConfirm">Laden</button>
-      </div>
-    `);
-    document.getElementById("jsonCancel").onclick = closeModal;
-    document.getElementById("jsonConfirm").onclick = async ()=>{
-      if(document.getElementById("jsonReplace").checked){
-        await dbClear();
-      }
-      await dbBulkPut(records);
-      ALL = await dbGetAll();
-      render();
-      closeModal();
-      showToast(`${records.length} Einträge geladen.`);
-    };
-  } catch(err){
-    showToast("Fehler beim Lesen der Datei: " + err.message);
-  }
-  e.target.value = "";
-});
-
 /* ---------------- delete everything (start fresh) ---------------- */
 document.getElementById("btnDeleteAll").addEventListener("click", ()=>{
   const count = ALL.length;
   openModal(`
     <h2>Alle Daten löschen?</h2>
-    <p class="desc">Das löscht ${count} gespeicherte Fälle unwiderruflich aus diesem Browser. Das kann <strong>nicht</strong> rückgängig gemacht werden. Falls du sicher gehen willst, mach vorher ein JSON-Backup (Button „JSON-Backup" in der Toolbar).</p>
+    <p class="desc">Das löscht ${count} gespeicherte Fälle unwiderruflich aus diesem Browser. Das kann <strong>nicht</strong> rückgängig gemacht werden.</p>
     <div class="checkline"><input type="checkbox" id="alsoResetMappings"> Auch gespeicherte Zuordnungen zurücksetzen (Spalten-Mapping, Status-Zuordnungen)</div>
     <div class="modal-footer">
       <button class="btn ghost" id="delCancel">Abbrechen</button>
@@ -2221,7 +2191,13 @@ function openCustomFieldsModal(){
   document.getElementById("newCustomFieldName").addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ e.preventDefault(); addField(); } });
   document.getElementById("customFieldsCancel").onclick = closeModal;
   document.getElementById("customFieldsSave").onclick = ()=>{
+    const previousIds = new Set(customFieldDefs.map(cf=>cf.id));
     customFieldDefs = workingDefs.filter(cf=>cf.label.trim());
+    // Neu angelegte Felder landen automatisch als letzte Export-Spalte
+    // (Reihenfolge/Entfernen weiterhin im Export-Spalten-Dialog).
+    customFieldDefs.filter(cf=>!previousIds.has(cf.id)).forEach(cf=>{
+      if(!confluenceExportCols.includes("custom:"+cf.id)) confluenceExportCols.push("custom:"+cf.id);
+    });
     // A field dropped here can't stay selected as an export column either —
     // its per-case values in r.own.customFields are left untouched, just no
     // longer surfaced anywhere.
@@ -2503,29 +2479,79 @@ async function runConfluenceMerge(rows, colMap, valueMap){
   }
 }
 
+/* Wortvergleich (LCS) für den Konflikt-Dialog: markiert in beiden Fassungen die
+   Wörter, die es in der jeweils anderen nicht gibt. Leerraum wird nicht
+   verglichen, aber originalgetreu ausgegeben (Zeilenumbrüche bleiben sichtbar). */
+function diffWordsHtml(confText, localText){
+  const tok = s=>String(s??"").match(/\s+|\S+/g) || [];
+  const ta = tok(confText), tb = tok(localText);
+  const ia = [], ib = [];                       // Positionen der Wort-Tokens
+  ta.forEach((t,i)=>{ if(/\S/.test(t)) ia.push(i); });
+  tb.forEach((t,i)=>{ if(/\S/.test(t)) ib.push(i); });
+  const n = ia.length, m = ib.length;
+  if(n*m > 4000000){                            // zu lang: ohne Markierung anzeigen
+    return { conf:escapeHtml(String(confText??"")), local:escapeHtml(String(localText??"")), marked:0, skipped:true };
+  }
+  const w = m+1, dp = new Uint16Array((n+1)*w);
+  for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--){
+    dp[i*w+j] = ta[ia[i]]===tb[ib[j]] ? dp[(i+1)*w+j+1]+1 : Math.max(dp[(i+1)*w+j], dp[i*w+j+1]);
+  }
+  const commonA = new Set(), commonB = new Set();
+  let i=0, j=0;
+  while(i<n && j<m){
+    if(ta[ia[i]]===tb[ib[j]]){ commonA.add(ia[i]); commonB.add(ib[j]); i++; j++; }
+    else if(dp[(i+1)*w+j] >= dp[i*w+j+1]) i++;
+    else j++;
+  }
+  let marked = 0;
+  const build = (tokens, common, cls)=> tokens.map((t,k)=>{
+    if(!/\S/.test(t) || common.has(k)) return escapeHtml(t);
+    marked++;
+    return `<mark class="diff ${cls}">${escapeHtml(t)}</mark>`;
+  }).join("");
+  const conf = build(ta, commonA, "diff-conf"), local = build(tb, commonB, "diff-local");
+  return { conf, local, marked, skipped:false };
+}
+
 function openConflictModal(conflicts, summary, orphanCases){
   const fieldLabel = {internalStatus:"Interner Status", jiraTicket:"JIRA-Ticket", jiraLink:"JIRA-Link", jiraStatus:"JIRA-Status", nextSteps:"Nächste Schritte", notes:"Notizen"};
   const html = `
     <h2>Konflikte prüfen</h2>
-    <p class="desc">${summary.created} neu angelegt, ${summary.applied} Felder automatisch übernommen. Bei diesen ${conflicts.length} Feldern weicht dein lokaler Wert vom Confluence-Wert ab — bitte entscheiden.</p>
+    <p class="desc">${summary.created} neu angelegt, ${summary.applied} Felder automatisch übernommen. Bei diesen <span id="conflictRemaining">${conflicts.length}</span> Feldern weicht dein lokaler Wert vom Confluence-Wert ab — bitte entscheiden.</p>
     ${orphanCases && orphanCases.length ? `
     <p class="desc">⚠️ ${orphanCases.length} neu angelegte OSS-Nummer${orphanCases.length===1?"":"n"} ${orphanCases.length===1?"kommt":"kommen"} in keinem bisherigen SAP-Import vor — bitte kurz prüfen: ${orphanCases.map(c=>escapeHtml(c)).join(", ")}</p>` : ""}
     <div id="conflictList" style="display:flex;flex-direction:column;gap:10px;max-height:50vh;overflow-y:auto;">
-      ${conflicts.map((c,i)=>`
+      ${conflicts.map((c,i)=>{
+        // Bei den Freitext-Feldern (Notizen, Nächste Schritte): Wörter markieren, die es in der anderen Fassung nicht gibt
+        const d = (c.field==="notes" || c.field==="nextSteps") ? diffWordsHtml(c.incomingVal, c.currentVal) : null;
+        const hint = !d ? "" : d.skipped ? "Text zu lang für die Wortmarkierung."
+          : d.marked ? "Markiert: Wörter, die es nur in dieser Fassung gibt (blau = nur Confluence, gelb = nur lokal)."
+          : "Nur Leerzeichen/Zeilenumbrüche unterscheiden sich.";
+        return `
         <div class="sap-readout" data-idx="${i}">
           <div class="r"><span>${escapeHtml(c.case)}</span><span>${fieldLabel[c.field]||c.field}</span></div>
-          <div class="r"><span>Confluence</span><span>${escapeHtml(c.incomingVal)}</span></div>
-          <div class="r"><span>Lokal (aktuell)</span><span>${escapeHtml(c.currentVal)}</span></div>
+          <div class="r${d?" diff-r":""}"><span>Confluence</span><span>${d?d.conf:escapeHtml(c.incomingVal)}</span></div>
+          <div class="r${d?" diff-r":""}"><span>Lokal (aktuell)</span><span>${d?d.local:escapeHtml(c.currentVal)}</span></div>
+          ${hint?`<div class="diff-hint">${hint}</div>`:""}
           <div style="display:flex;gap:8px;margin-top:4px;">
             <button class="btn ghost take-confluence" data-idx="${i}" style="flex:1;">Confluence übernehmen</button>
             <button class="btn ghost keep-local" data-idx="${i}" style="flex:1;">Eigenen Wert behalten</button>
           </div>
-        </div>`).join("")}
+        </div>`;}).join("")}
     </div>
     <div class="modal-footer"><button class="btn primary" id="conflictDone">Fertig</button></div>
   `;
   openModal(html);
   document.getElementById("conflictDone").onclick = closeModal;
+
+  // Erledigte Konflikte verschwinden aus der Liste, der Zähler zeigt den Rest.
+  const removeConflictBox = (box)=>{
+    box.remove();
+    const left = document.querySelectorAll("#conflictList .sap-readout").length;
+    const cnt = document.getElementById("conflictRemaining");
+    if(cnt) cnt.textContent = left;
+    if(left===0) document.getElementById("conflictList").innerHTML = `<div class="qv-empty">Alle Konflikte erledigt.</div>`;
+  };
 
   document.querySelectorAll(".take-confluence").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
@@ -2538,18 +2564,14 @@ function openConflictModal(conflicts, summary, orphanCases){
         ALL = await dbGetAll();
         render();
       }
-      const box = btn.closest(".sap-readout");
-      box.style.opacity = "0.35";
-      box.querySelectorAll("button").forEach(b=>b.disabled=true);
+      removeConflictBox(btn.closest(".sap-readout"));
       showToast(`${c.case}: Confluence-Wert übernommen.`);
     });
   });
   document.querySelectorAll(".keep-local").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       const c = conflicts[btn.dataset.idx];
-      const box = btn.closest(".sap-readout");
-      box.style.opacity = "0.35";
-      box.querySelectorAll("button").forEach(b=>b.disabled=true);
+      removeConflictBox(btn.closest(".sap-readout"));
       showToast(`${c.case}: eigener Wert behalten.`);
     });
   });
