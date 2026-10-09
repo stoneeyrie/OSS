@@ -470,6 +470,24 @@ const CONFLUENCE_FIELD_TARGETS = [
   {v:"nextSteps", label:"Nächste Schritte"},
   {v:"notes", label:"Notizen"},
 ];
+/* Ziele für das Spalten-Mapping: die festen Felder plus die eigenen Felder
+   (Ids als "custom:<id>", wie im Export). Wird bei jedem Aufruf frisch gebaut,
+   damit neu angelegte/umbenannte Felder sofort im Dropdown erscheinen. */
+function getFieldTargets(){
+  return CONFLUENCE_FIELD_TARGETS.concat(customFieldDefs.map(cf=>({ v:"custom:"+cf.id, label:`${cf.label} (eigenes Feld)` })));
+}
+/* Eigene Felder liegen unter own.customFields[id], alle anderen direkt unter own. */
+function getOwnValue(rec, field){
+  return field.startsWith("custom:") ? (rec.own.customFields||{})[field.slice(7)] : rec.own[field];
+}
+function setOwnValue(rec, field, val){
+  if(field.startsWith("custom:")){
+    rec.own.customFields = rec.own.customFields || {};
+    rec.own.customFields[field.slice(7)] = val;
+  } else {
+    rec.own[field] = val;
+  }
+}
 function guessFieldForHeader(h){
   const u = h.toUpperCase().trim();
   if(/^#$/.test(u) || /^NR\.?$/.test(u) || /LFD/.test(u)) return "seqNumber";
@@ -2292,7 +2310,7 @@ function openColumnMappingModal(rows, headers){
         <div style="display:flex;align-items:center;gap:10px;">
           <div style="flex:1;font-family:var(--mono);font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(h)}">${escapeHtml(h)}</div>
           <select data-header="${escapeHtml(h)}" class="colmap-select" style="flex:1;background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius);font-size:12.5px;">
-            ${CONFLUENCE_FIELD_TARGETS.map(t=>`<option value="${t.v}" ${(h in savedColMap ? savedColMap[h] : guessFieldForHeader(h))===t.v?"selected":""}>${t.label}</option>`).join("")}
+            ${getFieldTargets().map(t=>`<option value="${t.v}" ${(h in savedColMap ? savedColMap[h] : guessFieldForHeader(h))===t.v?"selected":""}>${escapeHtml(t.label)}</option>`).join("")}
           </select>
         </div>`).join("")}
     </div>
@@ -2396,6 +2414,8 @@ async function runConfluenceMerge(rows, colMap, valueMap){
     Object.keys(colMap).forEach(h=>{
       const field = colMap[h];
       if(field==="case") return;
+      // Zuordnung auf ein inzwischen gelöschtes eigenes Feld: ignorieren
+      if(field.startsWith("custom:") && !customFieldDefs.some(cf=>"custom:"+cf.id===field)) return;
       let val = (raw[h]||"").trim();
       if(!val) return;
       if(field==="internalStatus"){
@@ -2435,11 +2455,11 @@ async function runConfluenceMerge(rows, colMap, valueMap){
     let recordHadConflict = false;
     Object.keys(incoming).forEach(field=>{
       const incomingVal = incoming[field];
-      const currentVal = rec.own[field];
+      const currentVal = getOwnValue(rec, field);
       const isDefaultLocal = field==="internalStatus" ? (currentVal==="NEW") : (!currentVal);
       if(currentVal === incomingVal) return;
       if(isDefaultLocal){
-        rec.own[field] = incomingVal;
+        setOwnValue(rec, field, incomingVal);
         applied++;
       } else {
         conflicts.push({ case: caseId, field, currentVal, incomingVal });
@@ -2515,6 +2535,7 @@ function diffWordsHtml(confText, localText){
 
 function openConflictModal(conflicts, summary, orphanCases){
   const fieldLabel = {internalStatus:"Interner Status", jiraTicket:"JIRA-Ticket", jiraLink:"JIRA-Link", jiraStatus:"JIRA-Status", nextSteps:"Nächste Schritte", notes:"Notizen"};
+  customFieldDefs.forEach(cf=>{ fieldLabel["custom:"+cf.id] = cf.label; });
   const html = `
     <h2>Konflikte prüfen</h2>
     <p class="desc">${summary.created} neu angelegt, ${summary.applied} Felder automatisch übernommen. Bei diesen <span id="conflictRemaining">${conflicts.length}</span> Feldern weicht dein lokaler Wert vom Confluence-Wert ab — bitte entscheiden.</p>
@@ -2529,7 +2550,7 @@ function openConflictModal(conflicts, summary, orphanCases){
           : "Nur Leerzeichen/Zeilenumbrüche unterscheiden sich.";
         return `
         <div class="sap-readout" data-idx="${i}">
-          <div class="r"><span>${escapeHtml(c.case)}</span><span>${fieldLabel[c.field]||c.field}</span></div>
+          <div class="r"><span>${escapeHtml(c.case)}</span><span>${escapeHtml(fieldLabel[c.field]||c.field)}</span></div>
           <div class="r${d?" diff-r":""}"><span>Confluence</span><span>${d?d.conf:escapeHtml(c.incomingVal)}</span></div>
           <div class="r${d?" diff-r":""}"><span>Lokal (aktuell)</span><span>${d?d.local:escapeHtml(c.currentVal)}</span></div>
           ${hint?`<div class="diff-hint">${hint}</div>`:""}
@@ -2558,7 +2579,7 @@ function openConflictModal(conflicts, summary, orphanCases){
       const c = conflicts[btn.dataset.idx];
       const rec = ALL.find(r=>r.case===c.case);
       if(rec){
-        rec.own[c.field] = c.incomingVal;
+        setOwnValue(rec, c.field, c.incomingVal);
         rec.sync.confluenceSyncedAt = new Date().toISOString();
         await dbPut(rec);
         ALL = await dbGetAll();
