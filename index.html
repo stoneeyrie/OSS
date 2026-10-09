@@ -488,6 +488,33 @@ function setOwnValue(rec, field, val){
     rec.own[field] = val;
   }
 }
+/* Neue Confluence-Spalte bei bereits gespeichertem Mapping: gibt es schon ein
+   eigenes Feld mit gleichem Namen (Groß-/Kleinschreibung egal), wird es
+   zugeordnet, sonst wird ein neues eigenes Feld angelegt und – wie beim
+   manuellen Anlegen – als letzte Export-Spalte angehängt. Liefert das
+   Mapping-Ziel ("custom:<id>"), "" bei leerem Spaltennamen. Die Hinweise
+   (notes) erscheinen danach im Abschluss-Dialog des Abgleichs. */
+let pendingFieldNotes = [];
+function customFieldForNewHeader(header, notes){
+  const label = String(header||"").trim();
+  if(!label) return "";
+  const existing = customFieldDefs.find(cf=>cf.label.trim().toLowerCase()===label.toLowerCase());
+  if(existing){
+    notes.push(`„${label}“ → bestehendem eigenen Feld zugeordnet`);
+    return "custom:"+existing.id;
+  }
+  const cf = { id:"cf_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), label };
+  customFieldDefs.push(cf);
+  if(!confluenceExportCols.includes("custom:"+cf.id)) confluenceExportCols.push("custom:"+cf.id);
+  localStorage.setItem("oss_tracker_custom_fields", JSON.stringify(customFieldDefs));
+  localStorage.setItem("oss_tracker_confluence_export_cols", JSON.stringify(confluenceExportCols));
+  notes.push(`„${label}“ → neues eigenes Feld angelegt (Mapping + Export)`);
+  return "custom:"+cf.id;
+}
+function fieldNotesHtml(notes){
+  return notes && notes.length
+    ? `<p class="desc">🆕 Neue Confluence-Spalten erkannt:<br>${notes.map(n=>escapeHtml(n)).join("<br>")}</p>` : "";
+}
 function guessFieldForHeader(h){
   const u = h.toUpperCase().trim();
   if(/^#$/.test(u) || /^NR\.?$/.test(u) || /LFD/.test(u)) return "seqNumber";
@@ -2127,14 +2154,23 @@ document.getElementById("fileConfluence").addEventListener("change", async (e)=>
     // Learn any headers we haven't seen before into the saved mapping, so it
     // stays complete without needing to reopen the dialog for genuinely new columns.
     let changed = false;
+    const fieldNotes = [];
     headers.forEach(h=>{
-      if(!(h in savedColMap)){ savedColMap[h] = guessFieldForHeader(h); changed = true; }
+      if(!(h in savedColMap)){
+        // Spalte, die die App weder kennt noch erraten kann: eigenes Feld anlegen/zuordnen
+        let field = guessFieldForHeader(h);
+        if(!field) field = customFieldForNewHeader(h, fieldNotes);
+        savedColMap[h] = field; changed = true;
+        if(field) effectiveMap[h] = field;
+      }
     });
+    pendingFieldNotes = fieldNotes;
     if(changed) localStorage.setItem("oss_tracker_confluence_colmap", JSON.stringify(savedColMap));
     proceedToValueMapping(rows, effectiveMap);
   } else {
     // First time, or the saved mapping no longer covers a case column (e.g.
     // headers changed a lot) — fall back to the manual dialog as a safety net.
+    pendingFieldNotes = [];
     openColumnMappingModal(rows, headers);
   }
 });
@@ -2395,6 +2431,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
   let created=0, applied=0;
   const conflicts = [];
   const orphanCases = []; // newly created & never matched to an actual SAP import — worth a second look
+  const fieldNotes = pendingFieldNotes; pendingFieldNotes = [];
 
   for(const raw of rows){
     let caseId = "";
@@ -2478,11 +2515,12 @@ async function runConfluenceMerge(rows, colMap, valueMap){
   render();
 
   if(conflicts.length){
-    openConflictModal(conflicts, {created, applied}, orphanCases);
+    openConflictModal(conflicts, {created, applied, fieldNotes}, orphanCases);
   } else {
     closeModal();
     openModal(`
       <h2>Confluence-Abgleich abgeschlossen</h2>
+      ${fieldNotesHtml(fieldNotes)}
       <div class="summary-grid">
         <div class="summary-box"><div class="num" style="color:var(--green)">${created}</div><div class="lbl">Neu angelegt</div></div>
         <div class="summary-box"><div class="num" style="color:var(--blue)">${applied}</div><div class="lbl">Felder übernommen</div></div>
@@ -2538,6 +2576,7 @@ function openConflictModal(conflicts, summary, orphanCases){
   customFieldDefs.forEach(cf=>{ fieldLabel["custom:"+cf.id] = cf.label; });
   const html = `
     <h2>Konflikte prüfen</h2>
+    ${fieldNotesHtml(summary.fieldNotes)}
     <p class="desc">${summary.created} neu angelegt, ${summary.applied} Felder automatisch übernommen. Bei diesen <span id="conflictRemaining">${conflicts.length}</span> Feldern weicht dein lokaler Wert vom Confluence-Wert ab — bitte entscheiden.</p>
     ${orphanCases && orphanCases.length ? `
     <p class="desc">⚠️ ${orphanCases.length} neu angelegte OSS-Nummer${orphanCases.length===1?"":"n"} ${orphanCases.length===1?"kommt":"kommen"} in keinem bisherigen SAP-Import vor — bitte kurz prüfen: ${orphanCases.map(c=>escapeHtml(c)).join(", ")}</p>` : ""}
