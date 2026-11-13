@@ -2611,10 +2611,37 @@ function openConflictModal(conflicts, summary, orphanCases){
           </div>
         </div>`;}).join("")}
     </div>
-    <div class="modal-footer"><button class="btn primary" id="conflictDone">Fertig</button></div>
+    <div class="modal-footer">${conflicts.length ? `<button class="btn ghost" id="conflictTakeAll">Alle von Confluence übernehmen</button>` : ""}<button class="btn primary" id="conflictDone">Fertig</button></div>
   `;
   openModal(html);
   document.getElementById("conflictDone").onclick = closeModal;
+
+  // Alle noch offenen Konflikte auf einmal mit dem Confluence-Wert übernehmen
+  // (bereits einzeln entschiedene sind schon aus der Liste verschwunden).
+  const takeAllBtn = document.getElementById("conflictTakeAll");
+  if(takeAllBtn) takeAllBtn.addEventListener("click", async ()=>{
+    const boxes = Array.from(document.querySelectorAll("#conflictList .sap-readout"));
+    if(!boxes.length) return;
+    const now = new Date().toISOString();
+    const touched = new Map();
+    boxes.forEach(box=>{
+      const c = conflicts[box.dataset.idx];
+      const rec = ALL.find(r=>r.case===c.case);
+      if(!rec) return;
+      setOwnValue(rec, c.field, c.incomingVal);
+      rec.sync.confluenceSyncedAt = now;
+      touched.set(rec.case, rec);
+    });
+    await dbBulkPut(Array.from(touched.values()));
+    ALL = await dbGetAll();
+    render();
+    boxes.forEach(box=>box.remove());
+    const cnt = document.getElementById("conflictRemaining");
+    if(cnt) cnt.textContent = 0;
+    document.getElementById("conflictList").innerHTML = `<div class="qv-empty">Alle Konflikte erledigt.</div>`;
+    takeAllBtn.remove();
+    showToast(`${boxes.length} Konflikt${boxes.length===1?"":"e"} in ${touched.size} Meldung${touched.size===1?"":"en"}: Confluence-Werte übernommen.`);
+  });
 
   // Erledigte Konflikte verschwinden aus der Liste, der Zähler zeigt den Rest.
   const removeConflictBox = (box)=>{
@@ -2622,7 +2649,10 @@ function openConflictModal(conflicts, summary, orphanCases){
     const left = document.querySelectorAll("#conflictList .sap-readout").length;
     const cnt = document.getElementById("conflictRemaining");
     if(cnt) cnt.textContent = left;
-    if(left===0) document.getElementById("conflictList").innerHTML = `<div class="qv-empty">Alle Konflikte erledigt.</div>`;
+    if(left===0){
+      document.getElementById("conflictList").innerHTML = `<div class="qv-empty">Alle Konflikte erledigt.</div>`;
+      if(takeAllBtn) takeAllBtn.remove();
+    }
   };
 
   document.querySelectorAll(".take-confluence").forEach(btn=>{
