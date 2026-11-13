@@ -885,11 +885,23 @@ const HEADER_MAP = {
   "AUTO-CONFIRM DATE":"autoConfirmDate", "DATUM DER AUTOMATISCHEN BESTÄTIGUNG":"autoConfirmDate"
 };
 
+/* XLSX-Import: Erkennt SheetJS das Zahlenformat einer Datumszelle nicht,
+   kommt statt des Datums die Excel-Seriennummer an (z. B. "46230.38789").
+   Die wird hier in einen ISO-Zeitstempel (UTC) umgerechnet, wie ihn auch
+   der CSV-Pfad liefert. Excel-Epoche: 1899-12-30 = Seriennummer 0. */
+const DATE_FIELDS = ["createdOn", "updatedOn", "autoConfirmDate"];
+function excelSerialToIso(v){
+  const s = String(v).trim().replace(",", ".");
+  if(!/^\d{5}(\.\d+)?$/.test(s)) return v;
+  const ms = Math.round((Number(s) - 25569) * 86400000);
+  const d = new Date(ms);
+  return isNaN(d) ? v : d.toISOString();
+}
 function normalizeRow(raw){
   const out = {};
   Object.keys(raw).forEach(h=>{
     const key = HEADER_MAP[h.trim().toUpperCase()];
-    if(key) out[key] = raw[h];
+    if(key) out[key] = DATE_FIELDS.includes(key) ? excelSerialToIso(raw[h]) : raw[h];
   });
   return out;
 }
