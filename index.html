@@ -2160,7 +2160,8 @@ function htmlTableFromRows(rowData){
         let html = escapeHtml(d.ctx.subject);
         if(d.ctx.jiraLabel){
           const jiraHtml = d.ctx.jiraLink ? smartLinkHtml(d.ctx.jiraLink, d.r.own.jiraTicket) : escapeHtml(d.ctx.jiraLabel);
-          html += (html ? " – " : "") + jiraHtml;
+          // Jira (Kachel/Link) in eigener Zeile unter dem Titel, nicht mit „–“ dahinter
+          html += (html ? "<br>" : "") + jiraHtml;
         }
         return `<td>${html}</td>`;
       }
