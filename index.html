@@ -248,6 +248,29 @@
   mark.diff-conf{background:var(--blue-soft);color:var(--blue);}
   mark.diff-local{background:var(--amber-soft);color:var(--amber);}
   .diff-hint{font-size:11.5px;color:var(--text-faint);}
+  /* Confluence-Abgleich: Konflikt-Karten und Änderungsliste */
+  .cf-card{background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:12.5px;}
+  .cf-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+  .cf-head .cf-case{font-family:var(--mono);color:var(--text);font-weight:600;}
+  .cf-head .cf-subj{color:var(--text-dim);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cf-field{font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px;background:var(--bg-hover);color:var(--text-dim);white-space:nowrap;}
+  .cf-cmp{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .cf-side{border:1px solid var(--border);border-radius:6px;padding:6px 8px;min-width:0;}
+  .cf-side.conf{border-left:3px solid var(--blue);}
+  .cf-side.local{border-left:3px solid var(--amber);}
+  .cf-side .cf-lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-faint);margin-bottom:3px;font-weight:600;}
+  .cf-val{white-space:pre-wrap;word-break:break-word;color:var(--text);}
+  .cmp-empty{color:var(--text-faint);font-style:italic;}
+  .cmp-raw{font-size:11px;color:var(--text-faint);margin-top:3px;}
+  details.chg{margin:0 0 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-elevated-2);}
+  details.chg summary{cursor:pointer;padding:8px 12px;font-size:12.5px;color:var(--text-dim);font-weight:600;}
+  .chg-table{width:100%;border-collapse:collapse;font-size:12px;}
+  .chg-table td{padding:5px 10px;border-top:1px solid var(--border);vertical-align:top;}
+  .chg-table td:first-child{font-family:var(--mono);white-space:nowrap;}
+  .chg-arrow{color:var(--text-faint);padding:0 4px;}
+  .chg-old{color:var(--text-faint);text-decoration:line-through;}
+  .ac-cleared{color:var(--text-faint);font-style:italic;cursor:help;}
+  .qv-clear{margin-left:auto;flex-shrink:0;}
   .divider{height:1px;background:var(--border);margin:2px 0;}
   .drawer-footer{display:flex;gap:8px;margin-top:auto;padding-top:10px;}
   .missing-flag{
@@ -555,6 +578,47 @@ function parseHyperlinkFormula(text){
   if(!text) return null;
   const m = String(text).match(HYPERLINK_FORMULA_RE);
   return m ? { url: m[1], text: m[2] } : null;
+}
+
+/* Freitext-Felder (Nächste Schritte, Notizen, eigene Felder) mit Links:
+   Confluence exportiert eine verlinkte Zelle als =HYPERLINK("url";"Text").
+   Ohne Umwandlung landete die Formel wörtlich im Feld und ging beim Kopieren
+   auch wörtlich zurück nach Confluence. Gespeichert wird ein Link deshalb als
+   [Text](url) — bzw. nur als url, wenn Text und url gleich sind. Daraus wird
+   beim Export wieder ein echter Link (<a>) und in der App ein klickbarer Link.
+   Erkennt auch Formeln mitten im Text und verdoppelte Anführungszeichen. */
+const HYPERLINK_ANY_RE = /=?\s*HYPERLINK\(\s*"((?:[^"]|"")+)"\s*[;,]\s*"((?:[^"]|"")*)"\s*\)/gi;
+function convertHyperlinkFormulas(text){
+  if(!text || !/HYPERLINK\(/i.test(text)) return text;
+  return String(text).replace(HYPERLINK_ANY_RE, (m, url, label)=>{
+    url = url.replace(/""/g,'"').trim();
+    label = label.replace(/""/g,'"').trim();
+    return (!label || label === url) ? url : `[${label}](${url})`;
+  });
+}
+// [Text](url) oder nackte URL; die URL endet vor Leerraum, ")" am Schluss
+// eines Satzes bzw. Satzzeichen werden nicht mitgenommen.
+const LINK_TOKEN_RE = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s<>"]+/g;
+function trimUrlTail(u){ return u.replace(/[),.;:!?]+$/,""); }
+/* Escaped HTML mit klickbaren Links. extraAttrs z.B. für target/onclick. */
+function linkifyHtml(text, extraAttrs){
+  const s = String(text ?? "");
+  const attrs = extraAttrs ? " " + extraAttrs : "";
+  let out = "", last = 0, m;
+  LINK_TOKEN_RE.lastIndex = 0;
+  while((m = LINK_TOKEN_RE.exec(s))){
+    let url, label, full = m[0];
+    if(m[1]){ url = m[2]; label = m[1]; }
+    else { url = trimUrlTail(full); label = url; full = url; }
+    out += escapeHtml(s.slice(last, m.index)) + `<a href="${escapeHtml(url)}"${attrs}>${escapeHtml(label)}</a>`;
+    last = m.index + full.length;
+    LINK_TOKEN_RE.lastIndex = last;
+  }
+  return out + escapeHtml(s.slice(last));
+}
+/* Reine Textfassung (TSV/Vorschau): [Text](url) → "Text (url)". */
+function linksToPlain(text){
+  return String(text ?? "").replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1 ($2)");
 }
 
 function extractUrl(text){
@@ -931,6 +995,15 @@ async function mergeImport(rawRows){
     };
     if(existingMap.has(row.case)){
       const rec = existingMap.get(row.case);
+      // Manuell entferntes Auto-Bestätigungsdatum: bleibt entfernt, solange
+      // SAP noch dasselbe (alte) Datum liefert. Kommt ein anderes oder gar
+      // keins, gilt wieder der SAP-Wert und die Markierung entfällt.
+      if(rec.own.autoConfirmCleared){
+        const oldT = parseDateValue(rec.own.autoConfirmCleared);
+        const newT = parseDateValue(sapBlock.autoConfirmDate);
+        if(oldT !== null && oldT === newT) sapBlock.autoConfirmDate = "";
+        else delete rec.own.autoConfirmCleared;
+      }
       rec.sap = sapBlock;
       rec.own.updatedOnOverridden = false;
       rec.meta.lastSeenImportAt = now;
@@ -1039,6 +1112,10 @@ function getAutoConfirmInfo(r){
    ⚠️ + explanatory tooltip (containing the original SAP date) when
    suspicious, and is identical to `text` otherwise. */
 function autoConfirmDisplay(r){
+  if(r.own.autoConfirmCleared && !r.sap.autoConfirmDate){
+    const tip = `Manuell entfernt (SAP-Datum war ${fmtDate(r.own.autoConfirmCleared)}). Bleibt entfernt, solange die CaseList dasselbe Datum liefert; ein neues SAP-Datum wird beim Import wieder übernommen.`;
+    return { text: "–", html: `<span class="ac-cleared" title="${escapeHtml(tip)}">entfernt</span>`, effectiveT: null };
+  }
   const info = getAutoConfirmInfo(r);
   if(!info.suspicious){
     return { text: fmtDate(r.sap.autoConfirmDate), html: escapeHtml(fmtDate(r.sap.autoConfirmDate)), effectiveT: info.effectiveT };
@@ -1046,6 +1123,23 @@ function autoConfirmDisplay(r){
   const text = fmtTimestamp(info.expectedT);
   const tooltip = `Berechnet: letztes SAP-Update + ${AUTO_CONFIRM_SAFETY_DAYS} Tage. SAP selbst nennt ${fmtDate(r.sap.autoConfirmDate)}, das liegt mehr als ${AUTO_CONFIRM_RULE_DAYS} Tage nach dem letzten Update und wirkt daher unplausibel (vermutlich ein SAP-Datenfehler — das echte Datum stimmt oft erst nach dem Öffnen der Meldung in SAP).`;
   return { text, html: `<span class="ac-corrected" title="${escapeHtml(tooltip)}">${escapeHtml(text)} ⚠️</span>`, effectiveT: info.effectiveT };
+}
+
+/* Auto-Bestätigungsdatum manuell entfernen (Meldung ist bearbeitet) bzw.
+   wiederherstellen. Der SAP-Originalwert bleibt in own.autoConfirmCleared. */
+async function clearAutoConfirm(r){
+  if(!r.sap.autoConfirmDate) return;
+  r.own.autoConfirmCleared = r.sap.autoConfirmDate;
+  r.sap.autoConfirmDate = "";
+  r.sync.dirty = true;
+  await dbPut(r);
+}
+async function restoreAutoConfirm(r){
+  if(!r.own.autoConfirmCleared) return;
+  r.sap.autoConfirmDate = r.own.autoConfirmCleared;
+  delete r.own.autoConfirmCleared;
+  r.sync.dirty = true;
+  await dbPut(r);
 }
 
 function priorityBadge(p){
@@ -1275,6 +1369,7 @@ function syncCustomFieldHeaderCols(){
   });
 }
 
+const TABLE_LINK_ATTRS = `target="_blank" rel="noopener" onclick="event.stopPropagation()"`;
 function render(){
   populateFilterOptions();
   syncCustomFieldHeaderCols();
@@ -1313,8 +1408,8 @@ function render(){
       <td class="mono">${fmtDate(r.sap.createdOn,true)}</td>
       <td class="mono">${fmtDate(r.sap.updatedOn,true)}</td>
       <td class="mono">${autoConfirmDisplay(r).html}</td>
-      <td class="next">${escapeHtml(r.own.nextSteps)||""}</td>
-      ${customFieldDefs.map(cf=>`<td class="next">${escapeHtml((r.own.customFields&&r.own.customFields[cf.id])||"")}</td>`).join("")}
+      <td class="next">${linkifyHtml(r.own.nextSteps||"", TABLE_LINK_ATTRS)}</td>
+      ${customFieldDefs.map(cf=>`<td class="next">${linkifyHtml((r.own.customFields&&r.own.customFields[cf.id])||"", TABLE_LINK_ATTRS)}</td>`).join("")}
       <td style="white-space:nowrap;">
         ${r.sync.dirty?'<span class="dirty-dot" title="noch nicht nach Confluence übertragen"></span>':""}
         <button class="row-action-btn" data-case="${escapeHtml(r.case)}" title="Diese Meldung für Confluence kopieren">📋</button>
@@ -1504,11 +1599,25 @@ function renderQuickView(){
       <span class="qv-case">${escapeHtml(r.case)}</span>
       <span class="qv-subject">${escapeHtml(r.sap.subject)||"–"}</span>
       <span class="qv-date">${autoConfirmDisplay(r).html}</span>
+      ${r.sap.autoConfirmDate ? `<button type="button" class="mini-btn qv-clear" data-case="${escapeHtml(r.case)}" title="Meldung bearbeitet: Auto-Bestätigungsdatum entfernen (rückgängig in der Detailansicht)"><svg class="icon" viewBox="0 0 24 24" style="width:12px;height:12px;vertical-align:-2px;"><polyline points="20 6 9 17 4 12"/></svg> bearbeitet</button>` : ""}
     </div>`;
   }).join("");
   const navList = upcoming.map(x=>x.r.case);
   body.querySelectorAll(".qv-row").forEach(row=>{
-    row.addEventListener("click", ()=> openDrawer(row.dataset.case, navList));
+    row.addEventListener("click", (e)=>{
+      if(e.target.closest(".qv-clear")) return;
+      openDrawer(row.dataset.case, navList);
+    });
+  });
+  body.querySelectorAll(".qv-clear").forEach(btn=>{
+    btn.addEventListener("click", async (e)=>{
+      e.stopPropagation();
+      const r = ALL.find(x=>x.case===btn.dataset.case);
+      if(!r) return;
+      await clearAutoConfirm(r);
+      render();
+      showToast(`${r.case}: Auto-Bestätigungsdatum entfernt.`);
+    });
   });
 }
 
@@ -1628,7 +1737,9 @@ function openDrawer(caseId, navList){
       <div class="r"><span>Melder</span><span>${escapeHtml(r.sap.reporter)||"–"} (${escapeHtml(r.sap.reporterId)||"–"})</span></div>
       <div class="r"><span>Gemeldet am</span><span>${fmtDate(r.sap.createdOn,true)}</span></div>
       <div class="r"><span>Letztes Update (SAP)</span><span>${fmtDate(r.sap.updatedOn,true)}${r.own.updatedOnOverridden ? ' <span title="Manuell auf heute gesetzt, bis zum nächsten SAP-Import" style="color:var(--accent);">✏️</span>' : ""} <button type="button" class="mini-btn" id="setUpdatedTodayBtn" title="Setzt dieses Datum auf heute — wird beim nächsten SAP-Import wieder durch den echten SAP-Wert ersetzt">Heute</button></span></div>
-      <div class="r"><span>Auto-Bestätigung</span><span>${autoConfirmDisplay(r).html}</span></div>
+      <div class="r"><span>Auto-Bestätigung</span><span>${autoConfirmDisplay(r).html}${r.sap.autoConfirmDate
+        ? ` <button type="button" class="mini-btn" id="clearAutoConfirmBtn" title="Meldung bearbeitet: Datum entfernen. Kommt mit der nächsten CaseList ein neues SAP-Datum, wird das wieder übernommen.">Entfernen</button>`
+        : (r.own.autoConfirmCleared ? ` <button type="button" class="mini-btn" id="restoreAutoConfirmBtn" title="SAP-Datum ${escapeHtml(fmtDate(r.own.autoConfirmCleared))} wiederherstellen">Wiederherstellen</button>` : "")}</span></div>
       <div class="r"><span>Zuletzt im Import gesehen</span><span>${fmtDate(r.meta.lastSeenImportAt,true)}</span></div>
       <div class="r"><span>Confluence-Sync</span><span>${r.sync.confluenceSyncedAt? fmtDate(r.sync.confluenceSyncedAt,true) : "nie"}</span></div>
     </div>
@@ -1718,6 +1829,21 @@ function openDrawer(caseId, navList){
       showToast("Letztes Update auf heute gesetzt und restliche Eingaben mitgespeichert.");
     };
   }
+  // Auto-Bestätigung entfernen/wiederherstellen: wie bei „Heute“ zuerst die
+  // Formularwerte übernehmen, damit das Neuzeichnen nichts Ungespeichertes verwirft.
+  [["clearAutoConfirmBtn", clearAutoConfirm, "Auto-Bestätigungsdatum entfernt."],
+   ["restoreAutoConfirmBtn", restoreAutoConfirm, "SAP-Datum der Auto-Bestätigung wiederhergestellt."]].forEach(([id, fn, msg])=>{
+    const btn = document.getElementById(id);
+    if(!btn) return;
+    btn.onclick = async ()=>{
+      collectDrawerFieldValues();
+      await fn(r);
+      ALL = await dbGetAll();
+      render();
+      openDrawer(r.case, drawerNavList);
+      showToast(msg);
+    };
+  });
   const archiveBtn = document.getElementById("archiveBtn");
   if(archiveBtn){
     archiveBtn.onclick = async ()=>{
@@ -1905,7 +2031,7 @@ function confluenceRowData(r){
   // break the row structure (TSV has no per-cell quoting here) or make the
   // preview look like extra rows — " / " keeps those forms readable and safe.
   const rawCells = cols.map(f=>f.value(r, ctx));
-  const cells = rawCells.map(c=>String(c??"").replace(/\r?\n/g," / "));
+  const cells = rawCells.map(c=>linksToPlain(String(c??"")).replace(/\r?\n/g," / "));
   return { r, ctx, cols, cells, rawCells };
 }
 function confluenceCells(r){ return confluenceRowData(r).cells; }
@@ -1943,7 +2069,8 @@ function htmlTableFromRows(rowData){
         }
         return `<td>${html}</td>`;
       }
-      return `<td>${escapeHtml(d.rawCells[i]).replace(/\n/g,"<br>")}</td>`;
+      // Links in Freitext ([Text](url) oder nackte URL) als echte Links ausgeben
+      return `<td>${linkifyHtml(d.rawCells[i]).replace(/\r?\n/g,"<br>")}</td>`;
     }).join("");
     return `<tr>${tds}</tr>`;
   }).join("");
@@ -2442,6 +2569,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
   const byCase = new Map(existing.map(r=>[r.case, r]));
   let created=0, applied=0;
   const conflicts = [];
+  const changes = []; // automatisch übernommene Felder: {case, field, oldVal, newVal, raw}
   const orphanCases = []; // newly created & never matched to an actual SAP import — worth a second look
   const fieldNotes = pendingFieldNotes; pendingFieldNotes = [];
 
@@ -2459,6 +2587,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
     if(!caseId) continue;
 
     const incoming = {};
+    const incomingRaw = {}; // Originaltext aus Confluence (für den Status)
     if(extractedCaseLink) incoming.caseLink = extractedCaseLink;
     Object.keys(colMap).forEach(h=>{
       const field = colMap[h];
@@ -2469,7 +2598,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
       if(!val) return;
       if(field==="internalStatus"){
         const mapped = valueMap[val] || "";
-        if(mapped) incoming[field] = mapped;
+        if(mapped){ incoming[field] = mapped; incomingRaw[field] = val; }
         return;
       }
       if(field==="jiraTicket"){
@@ -2482,7 +2611,9 @@ async function runConfluenceMerge(rows, colMap, valueMap){
         incoming.caseLink = extractUrl(val) || val;
         return;
       }
-      incoming[field] = val;
+      // Freitext (Nächste Schritte, Notizen, eigene Felder, …): verlinkte
+      // Zellen kommen als =HYPERLINK(...) — in [Text](url) umwandeln.
+      incoming[field] = convertHyperlinkFormulas(val);
     });
 
     let rec = byCase.get(caseId);
@@ -2510,8 +2641,9 @@ async function runConfluenceMerge(rows, colMap, valueMap){
       if(isDefaultLocal){
         setOwnValue(rec, field, incomingVal);
         applied++;
+        changes.push({ case: caseId, field, oldVal: currentVal, newVal: incomingVal, raw: incomingRaw[field] });
       } else {
-        conflicts.push({ case: caseId, field, currentVal, incomingVal });
+        conflicts.push({ case: caseId, field, currentVal, incomingVal, incomingRaw: incomingRaw[field] });
         recordHadConflict = true;
       }
     });
@@ -2527,7 +2659,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
   render();
 
   if(conflicts.length){
-    openConflictModal(conflicts, {created, applied, fieldNotes}, orphanCases);
+    openConflictModal(conflicts, {created, applied, fieldNotes, changes}, orphanCases);
   } else {
     closeModal();
     openModal(`
@@ -2538,6 +2670,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
         <div class="summary-box"><div class="num" style="color:var(--blue)">${applied}</div><div class="lbl">Felder übernommen</div></div>
         <div class="summary-box"><div class="num" style="color:var(--text-dim)">0</div><div class="lbl">Konflikte</div></div>
       </div>
+      ${changesHtml(changes)}
       ${orphanCases.length ? `
       <p class="desc" style="margin-top:14px;">⚠️ ${orphanCases.length} neu angelegte OSS-Nummer${orphanCases.length===1?"":"n"} ${orphanCases.length===1?"kommt":"kommen"} in keinem bisherigen SAP-Import vor. Meist ist das ein ganz normaler neuer Fall — bitte trotzdem kurz prüfen, ob die Nummer korrekt aussieht (z.B. ungewöhnliche Länge = möglicher Erkennungsfehler):</p>
       <div style="max-height:160px;overflow-y:auto;font-family:var(--mono);font-size:12px;color:var(--text-dim);background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;">
@@ -2547,6 +2680,52 @@ async function runConfluenceMerge(rows, colMap, valueMap){
     `);
     document.getElementById("mergeOk").onclick = closeModal;
   }
+}
+
+/* Anzeige-Helfer für den Confluence-Abgleich: Feldnamen und Werte so zeigen,
+   wie sie in der App zu sehen sind (Status als Badge mit Klartext statt
+   internem Schlüssel wie „SAP_IN_PROGRESS“). */
+function fieldLabelOf(field){
+  const labels = {internalStatus:"Interner Status", jiraTicket:"JIRA-Ticket", jiraLink:"JIRA-Link", jiraStatus:"JIRA-Status",
+    nextSteps:"Nächste Schritte", notes:"Notizen", seqNumber:"Laufende Nummer", caseLink:"SAP-Fall-Link"};
+  if(labels[field]) return labels[field];
+  if(field.startsWith("custom:")){
+    const cf = customFieldDefs.find(c=>c.id===field.slice(7));
+    return cf ? cf.label : "Eigenes Feld";
+  }
+  return field;
+}
+function fmtFieldValHtml(field, val, raw){
+  if(val==null || val==="") return `<span class="cmp-empty">(leer)</span>`;
+  if(field==="internalStatus"){
+    const s = INTERNAL_STATUSES.find(x=>x.v===val);
+    const badge = s ? `<span class="badge dot ${s.cls}">${s.label}</span>` : escapeHtml(val);
+    const rawNote = raw && s && raw.trim() !== s.label ? `<div class="cmp-raw">in Confluence: „${escapeHtml(raw)}“</div>` : "";
+    return badge + rawNote;
+  }
+  return linkifyHtml(val, `target="_blank" rel="noopener"`);
+}
+function caseSubject(caseId){
+  const r = ALL.find(x=>x.case===caseId);
+  return r ? (r.sap.subject||"") : "";
+}
+/* Liste der automatisch übernommenen Änderungen (vorher → nachher). */
+function changesHtml(changes){
+  if(!changes || !changes.length) return "";
+  const sorted = changes.slice().sort((a,b)=>a.case.localeCompare(b.case));
+  const rows = sorted.map((c,i)=>{
+    const sameCase = i>0 && sorted[i-1].case===c.case;
+    return `<tr>
+      <td title="${escapeHtml(caseSubject(c.case))}">${sameCase ? "" : escapeHtml(c.case)}</td>
+      <td><span class="cf-field">${escapeHtml(fieldLabelOf(c.field))}</span></td>
+      <td class="cf-val">${c.oldVal ? `<span class="chg-old">${fmtFieldValHtml(c.field, c.oldVal)}</span><span class="chg-arrow">→</span>` : ""}${fmtFieldValHtml(c.field, c.newVal, c.raw)}</td>
+    </tr>`;
+  }).join("");
+  const nCases = new Set(changes.map(c=>c.case)).size;
+  return `<details class="chg"${changes.length<=15?" open":""}>
+    <summary>Übernommene Änderungen: ${changes.length} Feld${changes.length===1?"":"er"} in ${nCases} Meldung${nCases===1?"":"en"}</summary>
+    <div style="max-height:32vh;overflow-y:auto;"><table class="chg-table"><tbody>${rows}</tbody></table></div>
+  </details>`;
 }
 
 /* Wortvergleich (LCS) für den Konflikt-Dialog: markiert in beiden Fassungen die
@@ -2584,28 +2763,36 @@ function diffWordsHtml(confText, localText){
 }
 
 function openConflictModal(conflicts, summary, orphanCases){
-  const fieldLabel = {internalStatus:"Interner Status", jiraTicket:"JIRA-Ticket", jiraLink:"JIRA-Link", jiraStatus:"JIRA-Status", nextSteps:"Nächste Schritte", notes:"Notizen"};
-  customFieldDefs.forEach(cf=>{ fieldLabel["custom:"+cf.id] = cf.label; });
+  // Nach OSS-Nummer sortiert, damit mehrere Konflikte einer Meldung beieinander stehen
+  conflicts.sort((a,b)=>a.case.localeCompare(b.case));
   const html = `
     <h2>Konflikte prüfen</h2>
     ${fieldNotesHtml(summary.fieldNotes)}
-    <p class="desc">${summary.created} neu angelegt, ${summary.applied} Felder automatisch übernommen. Bei diesen <span id="conflictRemaining">${conflicts.length}</span> Feldern weicht dein lokaler Wert vom Confluence-Wert ab — bitte entscheiden.</p>
+    <p class="desc">${summary.created} neu angelegt, ${summary.applied} Felder automatisch übernommen. Bei diesen <span id="conflictRemaining">${conflicts.length}</span> Feldern weicht dein Wert in der App vom Confluence-Wert ab — bitte entscheiden.</p>
+    ${changesHtml(summary.changes)}
     ${orphanCases && orphanCases.length ? `
     <p class="desc">⚠️ ${orphanCases.length} neu angelegte OSS-Nummer${orphanCases.length===1?"":"n"} ${orphanCases.length===1?"kommt":"kommen"} in keinem bisherigen SAP-Import vor — bitte kurz prüfen: ${orphanCases.map(c=>escapeHtml(c)).join(", ")}</p>` : ""}
     <div id="conflictList" style="display:flex;flex-direction:column;gap:10px;max-height:50vh;overflow-y:auto;">
       ${conflicts.map((c,i)=>{
-        // Bei den Freitext-Feldern (Notizen, Nächste Schritte): Wörter markieren, die es in der anderen Fassung nicht gibt
-        const d = (c.field==="notes" || c.field==="nextSteps") ? diffWordsHtml(c.incomingVal, c.currentVal) : null;
+        // Bei Freitext-Feldern (Notizen, Nächste Schritte, eigene Felder): Wörter markieren, die es in der anderen Fassung nicht gibt
+        const isText = c.field==="notes" || c.field==="nextSteps" || c.field.startsWith("custom:");
+        const d = isText ? diffWordsHtml(c.incomingVal, c.currentVal) : null;
         const hint = !d ? "" : d.skipped ? "Text zu lang für die Wortmarkierung."
-          : d.marked ? "Markiert: Wörter, die es nur in dieser Fassung gibt (blau = nur Confluence, gelb = nur lokal)."
+          : d.marked ? "Markiert: Wörter, die es nur in dieser Fassung gibt (blau = nur Confluence, gelb = nur App)."
           : "Nur Leerzeichen/Zeilenumbrüche unterscheiden sich.";
         return `
-        <div class="sap-readout" data-idx="${i}">
-          <div class="r"><span>${escapeHtml(c.case)}</span><span>${escapeHtml(fieldLabel[c.field]||c.field)}</span></div>
-          <div class="r${d?" diff-r":""}"><span>Confluence</span><span>${d?d.conf:escapeHtml(c.incomingVal)}</span></div>
-          <div class="r${d?" diff-r":""}"><span>Lokal (aktuell)</span><span>${d?d.local:escapeHtml(c.currentVal)}</span></div>
+        <div class="cf-card" data-idx="${i}">
+          <div class="cf-head">
+            <span class="cf-case">${escapeHtml(c.case)}</span>
+            <span class="cf-subj" title="${escapeHtml(caseSubject(c.case))}">${escapeHtml(caseSubject(c.case))}</span>
+            <span class="cf-field">${escapeHtml(fieldLabelOf(c.field))}</span>
+          </div>
+          <div class="cf-cmp">
+            <div class="cf-side conf"><div class="cf-lbl">Confluence</div><div class="cf-val">${d?d.conf:fmtFieldValHtml(c.field, c.incomingVal, c.incomingRaw)}</div></div>
+            <div class="cf-side local"><div class="cf-lbl">App (aktuell)</div><div class="cf-val">${d?d.local:fmtFieldValHtml(c.field, c.currentVal)}</div></div>
+          </div>
           ${hint?`<div class="diff-hint">${hint}</div>`:""}
-          <div style="display:flex;gap:8px;margin-top:4px;">
+          <div style="display:flex;gap:8px;">
             <button class="btn ghost take-confluence" data-idx="${i}" style="flex:1;">Confluence übernehmen</button>
             <button class="btn ghost keep-local" data-idx="${i}" style="flex:1;">Eigenen Wert behalten</button>
           </div>
@@ -2620,7 +2807,7 @@ function openConflictModal(conflicts, summary, orphanCases){
   // (bereits einzeln entschiedene sind schon aus der Liste verschwunden).
   const takeAllBtn = document.getElementById("conflictTakeAll");
   if(takeAllBtn) takeAllBtn.addEventListener("click", async ()=>{
-    const boxes = Array.from(document.querySelectorAll("#conflictList .sap-readout"));
+    const boxes = Array.from(document.querySelectorAll("#conflictList .cf-card"));
     if(!boxes.length) return;
     const now = new Date().toISOString();
     const touched = new Map();
@@ -2646,7 +2833,7 @@ function openConflictModal(conflicts, summary, orphanCases){
   // Erledigte Konflikte verschwinden aus der Liste, der Zähler zeigt den Rest.
   const removeConflictBox = (box)=>{
     box.remove();
-    const left = document.querySelectorAll("#conflictList .sap-readout").length;
+    const left = document.querySelectorAll("#conflictList .cf-card").length;
     const cnt = document.getElementById("conflictRemaining");
     if(cnt) cnt.textContent = left;
     if(left===0){
@@ -2666,14 +2853,14 @@ function openConflictModal(conflicts, summary, orphanCases){
         ALL = await dbGetAll();
         render();
       }
-      removeConflictBox(btn.closest(".sap-readout"));
+      removeConflictBox(btn.closest(".cf-card"));
       showToast(`${c.case}: Confluence-Wert übernommen.`);
     });
   });
   document.querySelectorAll(".keep-local").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       const c = conflicts[btn.dataset.idx];
-      removeConflictBox(btn.closest(".sap-readout"));
+      removeConflictBox(btn.closest(".cf-card"));
       showToast(`${c.case}: eigener Wert behalten.`);
     });
   });
@@ -2725,6 +2912,23 @@ document.querySelectorAll("thead th[data-k]").forEach(th=>{
 (async function init(){
   db = await openDB();
   ALL = await dbGetAll();
+  // Einmalige Bereinigung: Freitext, der vor dem Link-Fix als
+  // =HYPERLINK(...)-Formel gespeichert wurde, in [Text](url) umwandeln.
+  const fixed = [];
+  ALL.forEach(r=>{
+    let changed = false;
+    ["nextSteps","notes"].forEach(k=>{
+      const v = convertHyperlinkFormulas(r.own[k]);
+      if(v !== r.own[k]){ r.own[k] = v; changed = true; }
+    });
+    Object.keys(r.own.customFields||{}).forEach(k=>{
+      const v = convertHyperlinkFormulas(r.own.customFields[k]);
+      if(v !== r.own.customFields[k]){ r.own.customFields[k] = v; changed = true; }
+    });
+    // als ungesynct markieren, damit der korrigierte Link wieder nach Confluence geht
+    if(changed){ r.sync.dirty = true; fixed.push(r); }
+  });
+  if(fixed.length) await dbBulkPut(fixed);
   render();
 })();
 </script>
