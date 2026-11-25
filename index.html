@@ -2124,16 +2124,26 @@ function confluenceLine(r){ return confluenceCells(r).join("\t"); }
    whitespace or line breaks between tags, since stray whitespace text nodes
    in a pasted HTML fragment can be rendered by some editors as an extra
    blank line/row above the table. */
-/* Jira-Link als Confluence-Smart-Link (Inline-Karte). Der Confluence-Editor
-   macht aus einem eingefügten <a> nur dann eine Karte, wenn der Link als
-   Inline-Karte gekennzeichnet ist (data-inline-card) – so wie Confluence es
-   selbst beim Kopieren einer Karte in die Zwischenablage legt. Ohne diese
-   Kennzeichnung bleibt es ein normaler Link und musste bisher von Hand
-   ausgeschnitten und neu eingefügt werden. Andere Programme ignorieren die
-   Attribute und zeigen einen normalen Link. */
-function smartLinkHtml(url){
+/* Jira im Confluence-Export. Die Firma nutzt Confluence Data Center: Die
+   „Kachel“ ist dort das Jira-Makro. Confluence wandelt nur eine EINZELN
+   eingefügte Jira-URL automatisch in das Makro um, nicht Links in einer
+   eingefügten Tabelle. Darum wird das Makro direkt so geliefert, wie der
+   Editor es intern darstellt (Platzhalter-Bild mit data-macro-name="jira").
+   Ohne Server-Angabe nimmt Confluence den Standard-Jira-Server.
+   Abschaltbar über den Schalter im Dialog „Für Confluence kopieren“
+   (dann normaler Link). Ohne erkennbaren Vorgangsschlüssel: normaler Link. */
+let jiraAsMacro = localStorage.getItem("oss_tracker_jira_as_macro") !== "0";
+function jiraKeyFrom(url, ticket){
+  const k = String(ticket||"").match(JIRA_KEY_RE);
+  return k ? k[0] : (extractJiraInfo(url||"").key || "");
+}
+function smartLinkHtml(url, ticket){
   const u = escapeHtml(url);
-  return `<a href="${u}" data-inline-card="" data-card-url="${u}" data-card-appearance="inline">${u}</a>`;
+  const key = jiraKeyFrom(url, ticket);
+  if(!jiraAsMacro || !key) return `<a href="${u}">${u}</a>`;
+  const def = btoa(`{jira:key=${key}}`);
+  const src = `/plugins/servlet/confluence/placeholder/macro?definition=${encodeURIComponent(def)}&locale=de_DE&version=2`;
+  return `<img class="editor-inline-macro" src="${escapeHtml(src)}" data-macro-name="jira" data-macro-parameters="${escapeHtml("key="+key)}" data-macro-schema-version="1" alt="${escapeHtml(key)}">`;
 }
 
 function htmlTableFromRows(rowData){
@@ -2144,12 +2154,12 @@ function htmlTableFromRows(rowData){
         return d.ctx.caseLink ? `<td><a href="${escapeHtml(d.ctx.caseLink)}">${escapeHtml(c)}</a></td>` : `<td>${escapeHtml(c)}</td>`;
       }
       if(f.id === "jiraTicket"){
-        return d.ctx.jiraLink ? `<td>${smartLinkHtml(d.ctx.jiraLink)}</td>` : `<td>${escapeHtml(c)}</td>`;
+        return d.ctx.jiraLink ? `<td>${smartLinkHtml(d.ctx.jiraLink, d.r.own.jiraTicket)}</td>` : `<td>${escapeHtml(c)}</td>`;
       }
       if(f.id === "titleJira"){
         let html = escapeHtml(d.ctx.subject);
         if(d.ctx.jiraLabel){
-          const jiraHtml = d.ctx.jiraLink ? smartLinkHtml(d.ctx.jiraLink) : escapeHtml(d.ctx.jiraLabel);
+          const jiraHtml = d.ctx.jiraLink ? smartLinkHtml(d.ctx.jiraLink, d.r.own.jiraTicket) : escapeHtml(d.ctx.jiraLabel);
           html += (html ? " – " : "") + jiraHtml;
         }
         return `<td>${html}</td>`;
@@ -2305,6 +2315,7 @@ document.getElementById("btnConfluence").addEventListener("click", ()=>{
     <h2>Für Confluence kopieren</h2>
     <p class="desc">Erzeugt Zeilen mit den Spalten: <strong>${escapeHtml(colLabels)}</strong> (<button class="link-btn" id="openExportColsFromHere" type="button">Spalten anpassen</button>). Der SAP-Fall-Link und der JIRA-Link (falls vorhanden) stecken als Verlinkung direkt in OSS-Nummer bzw. JIRA-Ticket, statt eine eigene Spalte zu belegen. Wirkt das SAP-Datum der Auto-Bestätigung unplausibel, wird stattdessen unsere Schätzung „letztes Update + 20 Tage" exportiert, erkennbar am Sternchen (*). Wird als echte Tabelle in die Zwischenablage gelegt (nicht nur als Tab-Text) — beim Einfügen in eine Confluence-Tabelle landet jede Zeile/Spalte dann korrekt getrennt statt gesammelt in einer Zelle.</p>
     <div class="checkline"><input type="checkbox" id="onlyDirty" checked> Nur ungesynchte Einträge (⏫)</div>
+    <div class="checkline"><input type="checkbox" id="jiraAsMacro" ${jiraAsMacro?"checked":""}> Jira als Kachel (Jira-Makro) statt als Link — gilt für alle Kopier-Buttons</div>
     <div class="checkline"><input type="checkbox" id="includeArchived"> Archivierte einschließen</div>
     <textarea class="export-out" id="exportOut" readonly></textarea>
     <div class="modal-footer">
@@ -2314,6 +2325,10 @@ document.getElementById("btnConfluence").addEventListener("click", ()=>{
     </div>
   `);
   document.getElementById("openExportColsFromHere").onclick = ()=>{ closeModal(); openExportColumnsModal(); };
+  document.getElementById("jiraAsMacro").onchange = (e)=>{
+    jiraAsMacro = e.target.checked;
+    localStorage.setItem("oss_tracker_jira_as_macro", jiraAsMacro ? "1" : "0");
+  };
   const build = ()=>{
     const onlyDirty = document.getElementById("onlyDirty").checked;
     const includeArchived = document.getElementById("includeArchived").checked;
