@@ -381,7 +381,7 @@
     <select id="fPriority"><option value="">Priorität: alle</option></select>
     <select id="fComponent"><option value="">Komponente: alle</option></select>
     <label class="checkline" style="margin:0;"><input type="checkbox" id="fHideArchived" checked> Archivierte ausblenden</label>
-    <label class="checkline" style="margin:0;"><input type="checkbox" id="fOnlyMismatch"> ⚠ Nur abweichende Status (Confluence ↔ SAP)</label>
+    <label class="checkline" style="margin:0;"><input type="checkbox" id="fOnlyMismatch"> ⚠ Nur abweichende Status (intern ↔ SAP)</label>
     <button class="link-btn" id="btnResetFilter">Filter zurücksetzen</button>
     <div class="filter-count" id="filterCount"></div>
   </div>
@@ -1325,6 +1325,11 @@ function getFiltered(){
       if(aOk && bOk) return (an-bn)*sortDir;
       if(aOk !== bOk) return (aOk ? -1 : 1)*sortDir; // numeric values sort before empty ones
     }
+    // Interner Status: Reihenfolge wie im Auswahlfeld (Neu → … → Archiviert), nicht nach Code-Schlüssel
+    if(sortKey==="internalStatus"){
+      const idx = s=>{ const i = INTERNAL_STATUSES.findIndex(x=>x.v===s); return i<0 ? 99 : i; };
+      return (idx(a.own.internalStatus) - idx(b.own.internalStatus))*sortDir;
+    }
     if(sortKey==="createdOn" || sortKey==="updatedOn" || sortKey==="autoConfirmDate"){
       const at = sortKey==="autoConfirmDate" ? getAutoConfirmInfo(a).effectiveT : parseDateValue(a.sap[sortKey]);
       const bt = sortKey==="autoConfirmDate" ? getAutoConfirmInfo(b).effectiveT : parseDateValue(b.sap[sortKey]);
@@ -1528,13 +1533,26 @@ function renderStats(){
     }
   });
   let html = `<span class="stat-chip"><b>${total}</b> aktiv</span>`;
-  ["IN_PROGRESS","IN_TEST","WAITING_SAP","PROBLEM","DONE"].forEach(k=>{
-    if(counts[k]) html += `<span class="stat-chip">${statusMeta(k).label} <b>${counts[k]}</b></span>`;
+  // Ein Zähler je internem Status (außer Archiviert); Klick filtert auf diesen Status,
+  // erneuter Klick hebt den Filter wieder auf.
+  INTERNAL_STATUSES.forEach(s=>{
+    if(s.v === "ARCHIVED" || !counts[s.v]) return;
+    const active = activeInternalStatuses.size===1 && activeInternalStatuses.has(s.v);
+    html += `<span class="stat-chip status-chip" data-status="${s.v}" style="cursor:pointer;${active?"border-color:var(--accent);":""}" title="${active?"Filter aufheben":"Nur diesen Status anzeigen"}">${s.label} <b>${counts[s.v]}</b></span>`;
   });
   if(dirty) html += `<span class="stat-chip warn">⏫ ungesynct <b>${dirty}</b></span>`;
   if(missing) html += `<span class="stat-chip warn">⚠ fehlt im Import <b>${missing}</b></span>`;
   if(mismatched) html += `<span class="stat-chip warn" id="chipMismatch" style="cursor:pointer;" title="Klicken, um nur diese Meldungen anzuzeigen">⚠ Status weicht ab <b>${mismatched}</b></span>`;
   chips.innerHTML = html;
+  chips.querySelectorAll(".status-chip").forEach(chip=>{
+    chip.onclick = ()=>{
+      const v = chip.dataset.status;
+      const active = activeInternalStatuses.size===1 && activeInternalStatuses.has(v);
+      activeInternalStatuses = active ? new Set() : new Set([v]);
+      updateStatusFilterToggleLabel();
+      render();
+    };
+  });
   const chipMismatch = document.getElementById("chipMismatch");
   if(chipMismatch) chipMismatch.onclick = ()=>{
     document.getElementById("fOnlyMismatch").checked = true;
@@ -1656,7 +1674,12 @@ function openDrawer(caseId, navList){
       <button class="close" id="drawerClose">&times;</button>
     </div>
 
-    ${r.meta.missingFromImport ? `<div class="missing-flag">
+    ${r.own.archived ? `<div class="missing-flag" style="background:var(--bg-elevated-2);color:var(--text-dim);">
+      <span>Archiviert – in der Liste ausgeblendet (Filter „Archivierte ausblenden“).</span>
+      <button class="btn ghost" id="unarchiveBtn" style="flex-shrink:0;">Wiederherstellen</button>
+    </div>` : ""}
+
+    ${r.meta.missingFromImport && !r.own.archived ? `<div class="missing-flag">
       <span>Nicht mehr im letzten SAP-Import enthalten – vermutlich geschlossen/archiviert.</span>
       <button class="btn ghost" id="archiveBtn" style="flex-shrink:0;">Archivieren</button>
     </div>` : ""}
@@ -1764,7 +1787,12 @@ function openDrawer(caseId, navList){
   function collectDrawerFieldValues(){
     r.own.seqNumber = document.getElementById("editSeqNumber").value.trim();
     r.own.caseLink = document.getElementById("editCaseLink").value.trim();
+    const prevStatus = r.own.internalStatus;
     r.own.internalStatus = document.getElementById("editInternalStatus").value;
+    // Status „Archiviert“ und das Archiv-Kennzeichen gehen Hand in Hand:
+    // auf Archiviert setzen = archivieren, von Archiviert weg = wiederherstellen.
+    if(r.own.internalStatus === "ARCHIVED") r.own.archived = true;
+    else if(prevStatus === "ARCHIVED" && r.own.archived) r.own.archived = false;
     r.own.jiraTicket = document.getElementById("editJiraTicket").value.trim();
     r.own.jiraLink = document.getElementById("editJiraLink").value.trim();
     r.own.jiraStatus = document.getElementById("editJiraStatus").value;
@@ -1776,8 +1804,18 @@ function openDrawer(caseId, navList){
     });
   }
 
-  document.getElementById("drawerClose").onclick = closeDrawer;
-  document.getElementById("cancelBtn").onclick = closeDrawer;
+  // Formularwerte übernehmen und speichern (⏫ nur, wenn sich etwas geändert hat).
+  async function saveDrawerValues(){
+    const before = JSON.stringify(r.own);
+    collectDrawerFieldValues();
+    if(JSON.stringify(r.own) !== before){ r.sync.dirty = true; }
+    await dbPut(r);
+  }
+
+  // X und Klick daneben fragen bei ungespeicherten Änderungen nach,
+  // „Abbrechen“ verwirft bewusst ohne Rückfrage.
+  document.getElementById("drawerClose").onclick = ()=> closeDrawer();
+  document.getElementById("cancelBtn").onclick = ()=> closeDrawer(true);
   document.getElementById("copyOneBtn").onclick = async ()=>{
     // Sync + persist first, so the exported text always reflects what's
     // currently in the form, not the last explicitly saved state.
@@ -1847,28 +1885,57 @@ function openDrawer(caseId, navList){
   const archiveBtn = document.getElementById("archiveBtn");
   if(archiveBtn){
     archiveBtn.onclick = async ()=>{
+      collectDrawerFieldValues(); // Eingaben nicht verwerfen
       r.own.archived = true;
       r.own.internalStatus = "ARCHIVED";
+      r.sync.dirty = true;
       await dbPut(r);
-      closeDrawer();
+      closeDrawer(true);
       render();
       showToast("Fall archiviert.");
     };
   }
+  const unarchiveBtn = document.getElementById("unarchiveBtn");
+  if(unarchiveBtn){
+    unarchiveBtn.onclick = async ()=>{
+      collectDrawerFieldValues();
+      r.own.archived = false;
+      // Status zurück auf den SAP-Status (laut Mapping), sonst „Neu“
+      if(r.own.internalStatus === "ARCHIVED") r.own.internalStatus = mapSapStatusToInternal(r.sap.status) || "NEW";
+      r.sync.dirty = true;
+      await dbPut(r);
+      ALL = await dbGetAll();
+      render();
+      openDrawer(r.case, drawerNavList);
+      showToast(`Wiederhergestellt, Status: ${statusMeta(r.own.internalStatus).label}.`);
+    };
+  }
   document.getElementById("saveBtn").onclick = async ()=>{
-    const before = JSON.stringify(r.own);
-    collectDrawerFieldValues();
-    if(JSON.stringify(r.own) !== before){ r.sync.dirty = true; }
-    await dbPut(r);
-    closeDrawer();
+    await saveDrawerValues();
+    closeDrawer(true);
     render();
     showToast("Gespeichert.");
   };
 
+  // Blättern speichert ungespeicherte Eingaben automatisch, statt sie zu verwerfen.
+  const navTo = async (idx)=>{
+    if(idx < 0 || idx >= drawerNavList.length) return;
+    if(drawerDirtyCheck && drawerDirtyCheck()){
+      await saveDrawerValues();
+      render();
+      showToast(`${r.case}: Änderungen gespeichert.`);
+    }
+    openDrawer(drawerNavList[idx]);
+  };
   const prevBtn = document.getElementById("drawerPrevBtn");
   const nextBtn = document.getElementById("drawerNextBtn");
-  if(prevBtn) prevBtn.onclick = ()=>{ if(drawerNavIndex > 0) openDrawer(drawerNavList[drawerNavIndex - 1]); };
-  if(nextBtn) nextBtn.onclick = ()=>{ if(drawerNavIndex < drawerNavList.length - 1) openDrawer(drawerNavList[drawerNavIndex + 1]); };
+  if(prevBtn) prevBtn.onclick = ()=> navTo(drawerNavIndex - 1);
+  if(nextBtn) nextBtn.onclick = ()=> navTo(drawerNavIndex + 1);
+
+  // Stand des Formulars beim Öffnen merken, um ungespeicherte Änderungen zu erkennen.
+  const formSnap = ()=> JSON.stringify([...d.querySelectorAll("input,select,textarea")].map(el=>el.value));
+  const initialSnap = formSnap();
+  drawerDirtyCheck = ()=> formSnap() !== initialSnap;
 
   document.getElementById("drawerOverlay").classList.add("open");
 }
@@ -1891,8 +1958,14 @@ function makeOutsideClickCloser(overlayId, closeFn){
   });
 }
 
-function closeDrawer(){
-  document.getElementById("drawerOverlay").classList.remove("open");
+let drawerDirtyCheck = null; // wird von openDrawer gesetzt
+function closeDrawer(force){
+  const overlay = document.getElementById("drawerOverlay");
+  if(!overlay.classList.contains("open")) return;
+  if(force !== true && drawerDirtyCheck && drawerDirtyCheck()
+     && !confirm("Ungespeicherte Änderungen in dieser Meldung verwerfen?")) return;
+  drawerDirtyCheck = null;
+  overlay.classList.remove("open");
   applyLastViewedHighlight();
 }
 makeOutsideClickCloser("drawerOverlay", closeDrawer);
@@ -2051,6 +2124,18 @@ function confluenceLine(r){ return confluenceCells(r).join("\t"); }
    whitespace or line breaks between tags, since stray whitespace text nodes
    in a pasted HTML fragment can be rendered by some editors as an extra
    blank line/row above the table. */
+/* Jira-Link als Confluence-Smart-Link (Inline-Karte). Der Confluence-Editor
+   macht aus einem eingefügten <a> nur dann eine Karte, wenn der Link als
+   Inline-Karte gekennzeichnet ist (data-inline-card) – so wie Confluence es
+   selbst beim Kopieren einer Karte in die Zwischenablage legt. Ohne diese
+   Kennzeichnung bleibt es ein normaler Link und musste bisher von Hand
+   ausgeschnitten und neu eingefügt werden. Andere Programme ignorieren die
+   Attribute und zeigen einen normalen Link. */
+function smartLinkHtml(url){
+  const u = escapeHtml(url);
+  return `<a href="${u}" data-inline-card="" data-card-url="${u}" data-card-appearance="inline">${u}</a>`;
+}
+
 function htmlTableFromRows(rowData){
   const trs = rowData.map(d=>{
     const tds = d.cols.map((f,i)=>{
@@ -2059,12 +2144,12 @@ function htmlTableFromRows(rowData){
         return d.ctx.caseLink ? `<td><a href="${escapeHtml(d.ctx.caseLink)}">${escapeHtml(c)}</a></td>` : `<td>${escapeHtml(c)}</td>`;
       }
       if(f.id === "jiraTicket"){
-        return d.ctx.jiraLink ? `<td><a href="${escapeHtml(d.ctx.jiraLink)}">${escapeHtml(c)}</a></td>` : `<td>${escapeHtml(c)}</td>`;
+        return d.ctx.jiraLink ? `<td>${smartLinkHtml(d.ctx.jiraLink)}</td>` : `<td>${escapeHtml(c)}</td>`;
       }
       if(f.id === "titleJira"){
         let html = escapeHtml(d.ctx.subject);
         if(d.ctx.jiraLabel){
-          const jiraHtml = d.ctx.jiraLink ? `<a href="${escapeHtml(d.ctx.jiraLink)}">${escapeHtml(d.ctx.jiraLink)}</a>` : escapeHtml(d.ctx.jiraLabel);
+          const jiraHtml = d.ctx.jiraLink ? smartLinkHtml(d.ctx.jiraLink) : escapeHtml(d.ctx.jiraLabel);
           html += (html ? " – " : "") + jiraHtml;
         }
         return `<td>${html}</td>`;
@@ -2588,6 +2673,7 @@ async function runConfluenceMerge(rows, colMap, valueMap){
 
     const incoming = {};
     const incomingRaw = {}; // Originaltext aus Confluence (für den Status)
+    const emptyTextFields = []; // Freitext-Spalten, die in Confluence leer sind
     if(extractedCaseLink) incoming.caseLink = extractedCaseLink;
     Object.keys(colMap).forEach(h=>{
       const field = colMap[h];
@@ -2595,7 +2681,10 @@ async function runConfluenceMerge(rows, colMap, valueMap){
       // Zuordnung auf ein inzwischen gelöschtes eigenes Feld: ignorieren
       if(field.startsWith("custom:") && !customFieldDefs.some(cf=>"custom:"+cf.id===field)) return;
       let val = (raw[h]||"").trim();
-      if(!val) return;
+      if(!val){
+        if(field==="nextSteps" || field==="notes" || field.startsWith("custom:")) emptyTextFields.push(field);
+        return;
+      }
       if(field==="internalStatus"){
         const mapped = valueMap[val] || "";
         if(mapped){ incoming[field] = mapped; incomingRaw[field] = val; }
@@ -2632,6 +2721,9 @@ async function runConfluenceMerge(rows, colMap, valueMap){
       orphanCases.push(caseId);
     }
 
+    // Stand vor dem Abgleich: gab es lokale Änderungen, die noch nicht nach
+    // Confluence übertragen wurden?
+    const wasDirty = !!rec.sync.dirty;
     let recordHadConflict = false;
     Object.keys(incoming).forEach(field=>{
       const incomingVal = incoming[field];
@@ -2643,13 +2735,30 @@ async function runConfluenceMerge(rows, colMap, valueMap){
         applied++;
         changes.push({ case: caseId, field, oldVal: currentVal, newVal: incomingVal, raw: incomingRaw[field] });
       } else {
-        conflicts.push({ case: caseId, field, currentVal, incomingVal, incomingRaw: incomingRaw[field] });
+        conflicts.push({ case: caseId, field, currentVal, incomingVal, incomingRaw: incomingRaw[field], wasDirty });
         recordHadConflict = true;
       }
     });
+    // In Confluence geleerte Freitext-Zelle: Ist die Meldung lokal unverändert
+    // (kein ⏫), wurde der Text vermutlich in Confluence gelöscht → als Konflikt
+    // zur Entscheidung vorlegen. Mit ⏫ ist der lokale Text neuer → nichts tun.
+    if(!wasDirty){
+      emptyTextFields.forEach(field=>{
+        const currentVal = getOwnValue(rec, field);
+        if(!currentVal) return;
+        conflicts.push({ case: caseId, field, currentVal, incomingVal: "", wasDirty });
+        recordHadConflict = true;
+      });
+    }
+    // ⏫ nur zurücksetzen, wenn die Meldung noch nie übertragen wurde (⏫ stammt
+    // nur vom Anlegen beim SAP-Import). Wurde seit dem letzten Übertragen lokal
+    // etwas geändert, bleibt ⏫ stehen – auch Felder, die gar nicht aus Confluence
+    // zurückkommen (Auto-Bestätigung, JIRA-Status, „Heute“), müssen noch rüber.
     if(!recordHadConflict && Object.keys(incoming).length){
-      rec.sync.dirty = false;
-      rec.sync.confluenceSyncedAt = new Date().toISOString();
+      if(!wasDirty || !rec.sync.confluenceSyncedAt){
+        rec.sync.dirty = false;
+        rec.sync.confluenceSyncedAt = new Date().toISOString();
+      }
     }
   }
 
@@ -2781,14 +2890,14 @@ function openConflictModal(conflicts, summary, orphanCases){
           : d.marked ? "Markiert: Wörter, die es nur in dieser Fassung gibt (blau = nur Confluence, gelb = nur App)."
           : "Nur Leerzeichen/Zeilenumbrüche unterscheiden sich.";
         return `
-        <div class="cf-card" data-idx="${i}">
+        <div class="cf-card" data-idx="${i}" data-case="${escapeHtml(c.case)}">
           <div class="cf-head">
             <span class="cf-case">${escapeHtml(c.case)}</span>
             <span class="cf-subj" title="${escapeHtml(caseSubject(c.case))}">${escapeHtml(caseSubject(c.case))}</span>
             <span class="cf-field">${escapeHtml(fieldLabelOf(c.field))}</span>
           </div>
           <div class="cf-cmp">
-            <div class="cf-side conf"><div class="cf-lbl">Confluence</div><div class="cf-val">${d?d.conf:fmtFieldValHtml(c.field, c.incomingVal, c.incomingRaw)}</div></div>
+            <div class="cf-side conf"><div class="cf-lbl">Confluence</div><div class="cf-val">${d && c.incomingVal ? d.conf :fmtFieldValHtml(c.field, c.incomingVal, c.incomingRaw)}</div></div>
             <div class="cf-side local"><div class="cf-lbl">App (aktuell)</div><div class="cf-val">${d?d.local:fmtFieldValHtml(c.field, c.currentVal)}</div></div>
           </div>
           ${hint?`<div class="diff-hint">${hint}</div>`:""}
@@ -2802,6 +2911,28 @@ function openConflictModal(conflicts, summary, orphanCases){
   `;
   openModal(html);
   document.getElementById("conflictDone").onclick = closeModal;
+
+  // ⏫-Markierung nach den Entscheidungen: Hat man bei einer Meldung einen
+  // eigenen Wert behalten, unterscheidet sie sich von Confluence → ⏫ setzen.
+  // Wurde alles aus Confluence übernommen und war die Meldung vor dem Abgleich
+  // nicht ⏫, sind App und Confluence gleich → ⏫ entfernen. War sie schon ⏫,
+  // bleibt es dabei (es kann noch Änderungen an anderen Feldern geben).
+  const keptLocalCases = new Set();
+  const wasDirtyCase = (caseId)=> conflicts.some(c=>c.case===caseId && c.wasDirty);
+  const caseStillOpen = (caseId)=> Array.from(document.querySelectorAll("#conflictList .cf-card")).some(b=>b.dataset.case===caseId);
+  const applySyncState = (rec)=>{
+    if(keptLocalCases.has(rec.case)) rec.sync.dirty = true;
+    else if(!wasDirtyCase(rec.case)){ rec.sync.dirty = false; rec.sync.confluenceSyncedAt = new Date().toISOString(); }
+  };
+  const settleCase = async (caseId)=>{
+    if(caseStillOpen(caseId)) return;
+    const rec = ALL.find(r=>r.case===caseId);
+    if(!rec) return;
+    applySyncState(rec);
+    await dbPut(rec);
+    ALL = await dbGetAll();
+    render();
+  };
 
   // Alle noch offenen Konflikte auf einmal mit dem Confluence-Wert übernehmen
   // (bereits einzeln entschiedene sind schon aus der Liste verschwunden).
@@ -2819,6 +2950,7 @@ function openConflictModal(conflicts, summary, orphanCases){
       rec.sync.confluenceSyncedAt = now;
       touched.set(rec.case, rec);
     });
+    touched.forEach(applySyncState);
     await dbBulkPut(Array.from(touched.values()));
     ALL = await dbGetAll();
     render();
@@ -2854,14 +2986,17 @@ function openConflictModal(conflicts, summary, orphanCases){
         render();
       }
       removeConflictBox(btn.closest(".cf-card"));
+      await settleCase(c.case);
       showToast(`${c.case}: Confluence-Wert übernommen.`);
     });
   });
   document.querySelectorAll(".keep-local").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
+    btn.addEventListener("click", async ()=>{
       const c = conflicts[btn.dataset.idx];
+      keptLocalCases.add(c.case);
       removeConflictBox(btn.closest(".cf-card"));
-      showToast(`${c.case}: eigener Wert behalten.`);
+      await settleCase(c.case);
+      showToast(`${c.case}: eigener Wert behalten (⏫, beim nächsten Kopieren nach Confluence).`);
     });
   });
 }
